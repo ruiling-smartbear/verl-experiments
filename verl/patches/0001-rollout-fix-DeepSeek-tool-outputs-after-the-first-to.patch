@@ -1,0 +1,220 @@
+From 8e40659ed7f531625516a9649a5365836f47ebfc Mon Sep 17 00:00:00 2001
+From: Ruilin Gao <ruiling@andrew.cmu.edu>
+Date: Mon, 31 Aug 2026 08:20:10 +0000
+Subject: [PATCH] [rollout] fix: DeepSeek tool outputs after the first tool
+ turn follow the template
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The DeepSeek-V3 and R1 chat templates keep one is_output_first flag for the
+whole conversation: the first tool output opens with <｜tool▁outputs▁begin｜>,
+every later one starts with a newline instead. DeepSeekContinuousTokenBuilder
+rendered every tool group behind the same three-message synthetic prefix, so
+from the second tool turn on it emitted the first-turn form and drifted from
+what the template produces for the full conversation.
+
+Once previous_messages contain a tool message, render the group behind a
+prefix that already holds one synthetic tool exchange, which puts the template
+in the later-turn state. The first tool turn is unchanged, and so are V3.1 and
+V3.2, whose templates have no such flag.
+---
+ tests/utils/test_continuous_token_on_cpu.py | 113 ++++++++++++++++++++
+ verl/utils/tokenizer/continuous_token.py    |  36 +++++++
+ 2 files changed, 149 insertions(+)
+
+diff --git a/tests/utils/test_continuous_token_on_cpu.py b/tests/utils/test_continuous_token_on_cpu.py
+index 8d2e9c6..ed155e1 100644
+--- a/tests/utils/test_continuous_token_on_cpu.py
++++ b/tests/utils/test_continuous_token_on_cpu.py
+@@ -12,6 +12,7 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
++import json
+ import logging
+ 
+ import pytest
+@@ -276,6 +277,54 @@ class _DeepSeekBoundaryTokenizer(_TemplateTokenizer):
+         return rendered
+ 
+ 
++class _DeepSeekOutputsBlockTokenizer(_DeepSeekBoundaryTokenizer):
++    name_or_path = "deepseek-ai/DeepSeek-V3"
++
++    def apply_chat_template(
++        self,
++        messages,
++        tokenize=True,
++        add_generation_prompt=True,
++        tools=None,
++        return_dict=False,
++        **kwargs,
++    ):
++        """DeepSeek-V3 / R1 style tool outputs: one ``is_output_first`` flag for the whole
++        conversation, so only the first tool output opens an outputs block and later ones
++        start with a newline; a trailing tool message closes the block.
++        """
++        rendered = ""
++        last_was_tool = False
++        output_first = True
++        for message in messages:
++            role = message.get("role")
++            if role == "tool":
++                opener = "<tool_outputs_begin>" if output_first else "\n"
++                output_first = False
++                rendered += f"{opener}<tool_output_begin>{message.get('content', '')}<tool_output_end>"
++                last_was_tool = True
++                continue
++            if last_was_tool:
++                rendered += "<tool_outputs_end>"
++            last_was_tool = False
++            if role == "assistant" and message.get("tool_calls"):
++                calls = ""
++                for tool_call in message["tool_calls"]:
++                    function = tool_call["function"]
++                    calls += "<tool_call_begin>" + function["name"] + "<tool_sep>" + function["arguments"]
++                    calls += "<tool_call_end>"
++                rendered += "<assistant>" + message.get("content", "") + calls + "<eos>"
++            else:
++                rendered += f"<{role}>{message.get('content', '')}\n"
++        if last_was_tool:
++            rendered += "<tool_outputs_end>"
++        if add_generation_prompt and not last_was_tool:
++            rendered += "<assistant>"
++        if tokenize:
++            return self.encode(rendered, add_special_tokens=False)
++        return rendered
++
++
+ class _MissingSpecialTokenTokenizer(_TemplateTokenizer):
+     def convert_tokens_to_ids(self, token):
+         return None
+@@ -667,6 +716,70 @@ def test_deepseek_builder_synthetic_tool_call_arguments_are_a_json_string():
+     assert all(tool_call["function"]["arguments"] == "{}" for tool_call in synthetic_assistant["tool_calls"])
+ 
+ 
++def _deepseek_tool_call_turn(call_id: str, arguments) -> dict:
++    return {
++        "role": "assistant",
++        "content": "",
++        "tool_calls": [{"id": call_id, "type": "function", "function": {"name": "lookup", "arguments": arguments}}],
++    }
++
++
++def test_deepseek_builder_opens_the_outputs_block_on_the_first_tool_turn():
++    builder = create_continuous_token_builder(_DeepSeekOutputsBlockTokenizer(), model_family="deepseek")
++    previous_messages = [{"role": "user", "content": "question"}, _deepseek_tool_call_turn("call_0", {"q": "x"})]
++    updated_messages = previous_messages + [{"role": "tool", "content": "first", "tool_call_id": "call_0"}]
++
++    incremental = builder.tokenize_non_assistant_incremental_messages(previous_messages, updated_messages)
++
++    expected = "<tool_outputs_begin><tool_output_begin>first<tool_output_end><tool_outputs_end>"
++    assert incremental == [ord(char) for char in expected]
++
++
++def test_deepseek_builder_renders_later_tool_turns_like_the_full_conversation():
++    tokenizer = _DeepSeekOutputsBlockTokenizer()
++    builder = create_continuous_token_builder(tokenizer, model_family="deepseek")
++    previous_messages = [
++        {"role": "user", "content": "question"},
++        _deepseek_tool_call_turn("call_0", {"q": "x"}),
++        {"role": "tool", "content": "first", "tool_call_id": "call_0"},
++        _deepseek_tool_call_turn("call_1", {"q": "y"}),
++    ]
++    tool_messages = [
++        {"role": "tool", "content": "second", "tool_call_id": "call_1"},
++        {"role": "tool", "content": "third", "tool_call_id": "call_1"},
++    ]
++
++    incremental = builder.tokenize_non_assistant_incremental_messages(
++        previous_messages, previous_messages + tool_messages
++    )
++
++    # The conversation already holds a tool output, so the template is past its first
++    # outputs block: no <tool_outputs_begin>, a newline before each output instead.
++    expected = (
++        "\n<tool_output_begin>second<tool_output_end>\n<tool_output_begin>third<tool_output_end><tool_outputs_end>"
++    )
++    assert incremental == [ord(char) for char in expected]
++
++    # Same tokens the template produces for the whole conversation (rendered with the
++    # JSON-string arguments this template family can splice in).
++    def with_string_arguments(messages):
++        rendered = []
++        for message in messages:
++            message = dict(message)
++            if message.get("tool_calls"):
++                message["tool_calls"] = [
++                    {**call, "function": {**call["function"], "arguments": json.dumps(call["function"]["arguments"])}}
++                    for call in message["tool_calls"]
++                ]
++            rendered.append(message)
++        return rendered
++
++    full = tokenizer.apply_chat_template(with_string_arguments(previous_messages + tool_messages))
++    prefix = tokenizer.apply_chat_template(with_string_arguments(previous_messages), add_generation_prompt=False)
++    assert full[: len(prefix)] == prefix
++    assert incremental == full[len(prefix) :]
++
++
+ def test_gpt_oss_builder_formats_tool_responses_with_resolved_tool_name():
+     builder = create_continuous_token_builder(_TemplateTokenizer(), model_family="gptoss")
+     previous_messages = [
+diff --git a/verl/utils/tokenizer/continuous_token.py b/verl/utils/tokenizer/continuous_token.py
+index 6851f27..b7753c6 100644
+--- a/verl/utils/tokenizer/continuous_token.py
++++ b/verl/utils/tokenizer/continuous_token.py
+@@ -25,6 +25,7 @@ from .tokenizer import build_multimodal_processor_inputs, normalize_token_ids
+ _SUPPORTED_APPEND_ROLES = frozenset({"tool", "user", "system"})
+ _SYNTHETIC_SYSTEM_MESSAGE: dict[str, Any] = {"role": "system", "content": "continuous token synthetic system"}
+ _SYNTHETIC_USER_MESSAGE: dict[str, Any] = {"role": "user", "content": "continuous token synthetic user"}
++_SYNTHETIC_TOOL_OUTPUT: str = "continuous token synthetic tool output"
+ _ASSISTANT_REASONING_CONTENT: str = "reasoning"
+ _DUMMY_TOOL_NAME = "continuous_token_tool"
+ MergeKind = Literal["assistant", "non_assistant"]
+@@ -822,6 +823,41 @@ class DeepSeekContinuousTokenBuilder(ContinuousTokenBuilder):
+             tool_call["function"]["arguments"] = "{}"
+         return synthetic_assistant
+ 
++    def _tokenize_tool_group(
++        self,
++        tool_messages: list[dict[str, Any]],
++        *,
++        previous_messages: list[dict[str, Any]],
++        tools: list[dict[str, Any]] | None = None,
++        add_generation_prompt: bool = False,
++    ) -> list[int]:
++        if not any(message.get("role") == "tool" for message in previous_messages):
++            return super()._tokenize_tool_group(
++                tool_messages,
++                previous_messages=previous_messages,
++                tools=tools,
++                add_generation_prompt=add_generation_prompt,
++            )
++        # The V3 / R1 templates keep one ``is_output_first`` flag for the whole
++        # conversation: the first tool output opens with <｜tool▁outputs▁begin｜>,
++        # every later one starts with a newline instead. Once the conversation has
++        # seen a tool output, render behind a prefix that already contains one tool
++        # exchange so the template is in the later-turn state for the appended group.
++        earlier_tool_message = {"role": "tool", "content": _SYNTHETIC_TOOL_OUTPUT}
++        synthetic_prefix = [
++            _SYNTHETIC_SYSTEM_MESSAGE,
++            _SYNTHETIC_USER_MESSAGE,
++            self._synthetic_assistant_for_tools([earlier_tool_message]),
++            earlier_tool_message,
++            self._synthetic_assistant_for_tools(tool_messages),
++        ]
++        return self.render_delta_token_id(
++            synthetic_prefix,
++            tool_messages,
++            add_generation_prompt=add_generation_prompt,
++            tools=tools,
++        )
++
+     def _merge_non_assistant_token_ids(
+         self, runtime_token_ids: list[int], appended_token_ids: list[int]
+     ) -> MergeResult:
+-- 
+2.43.0
+

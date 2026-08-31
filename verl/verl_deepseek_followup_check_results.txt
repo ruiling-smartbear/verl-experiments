@@ -1,0 +1,29 @@
+== venv 3.12.6 transformers 5.16.1 ray 2.58.0 (Modal, bare venv; verl tokenizer package imported standalone)
+4b56aeee  (md5 prefix of verl_deepseek_followup_check.py as run)
+[followup] upstream main @f97625b vs main @f97625b + patch (4 files changed, 349 insertions(+)), transformers 5.16.1, tool_agent_loop-shaped trajectories, 24 cases per row
+[FU]    qwen      Qwen/Qwen2-7B-Instruct         dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FU]    qwen25    Qwen/Qwen2.5-7B-Instruct       dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FU]    qwen3     Qwen/Qwen3-8B                  dict         thinking_switch=True after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: n/a
+[FU]    qwen35    Qwen/Qwen3.5-9B                dict         thinking_switch=True after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FU]    minimaxm2 MiniMaxAI/MiniMax-M2           dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FU]    glm47     zai-org/GLM-4.7                dict         thinking_switch=True after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FU]    gemma4    google/gemma-4-12b-it          dict         thinking_switch=True after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FU]    gptoss    openai/gpt-oss-20b             dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==0/24 after==0/24
+[FU]    deepseek  deepseek-ai/DeepSeek-V3        dict         thinking_switch=False after==before 8/24 differ=16 only_before=0 only_after=0 neither=0 | ref: before==8/24 after==24/24
+[DIFF]  deepseek deepseek-ai/DeepSeek-V3 dict system=True prior=10 calls=1 kwargs={}
+[DIFF]    before: '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>Pittsburgh had 302,971 residents at the latest census estimate.<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[DIFF]    after : '\n<｜tool▁output▁begin｜>Pittsburgh had 302,971 residents at the latest census estimate.<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[FU]    deepseek  deepseek-ai/DeepSeek-V3        json         thinking_switch=False after==before 8/24 differ=16 only_before=0 only_after=0 neither=0 | ref: before==8/24 after==24/24
+[FU]    deepseek  deepseek-ai/DeepSeek-R1        dict         thinking_switch=False after==before 8/24 differ=16 only_before=0 only_after=0 neither=0 | ref: n/a
+[DIFF]  deepseek deepseek-ai/DeepSeek-R1 dict system=True prior=10 calls=1 kwargs={}
+[DIFF]    before: '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>Pittsburgh had 302,971 residents at the latest census estimate.<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[DIFF]    after : '<｜tool▁output▁begin｜>Pittsburgh had 302,971 residents at the latest census estimate.<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[FU]    deepseek  deepseek-ai/DeepSeek-R1        json         thinking_switch=False after==before 8/24 differ=16 only_before=0 only_after=0 neither=0 | ref: before==8/24 after==24/24
+[FU]    deepseek  deepseek-ai/DeepSeek-V3.1      dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: n/a
+[FU]    deepseek  deepseek-ai/DeepSeek-V3.1      json         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FU]    deepseek  deepseek-ai/DeepSeek-V3.2-Exp  dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: n/a
+[FU]    deepseek  deepseek-ai/DeepSeek-V3.2-Exp  json         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FU]    default   Qwen/Qwen3-8B                  dict         thinking_switch=True after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: n/a
+DEEPSEEK_FOLLOWUP_CHECK_DONE
+(the patch set at run time was the first revision of the two patches; the parser was amended afterwards to read every call
+ section, which does not touch the tokenizer package these rows exercise)

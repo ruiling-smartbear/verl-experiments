@@ -1,0 +1,55 @@
+== Rollout-level check, Modal H100, sglang 0.5.18 (torch 2.13.0+cu130), driver venv transformers 5.16.1
+== model: deepseek-ai/DeepSeek-R1-0528-Qwen3-8B (V3.1-style tool-call template, string concatenation of arguments)
+== driver: verl_deepseek_e2e.py @ecaf433, --nothink --tokenizer-class Qwen2TokenizerFast, temperature 0, max_new_tokens 2500
+== checkouts: verl_prefix = 3dab856 (before #7630); verl_main_fu = f97625b (main, with #7630);
+==            verl_fix_fu = f97625b + patches/ (tool parser + tool-outputs prefix)
+
+=== verl_prefix
+[verl_prefix] no deepseek_v3 parser in this checkout (Unknown tool parser: deepseek_v3); falling back to a regex
+[verl_prefix] verl=/tmp/verl_prefix model=deepseek-ai/DeepSeek-R1-0528-Qwen3-8B builder=DeepSeekContinuousTokenBuilder parser=regex eos_id=151645
+[verl_prefix] prompt: 163 tokens, tail 're the current populations of Pittsburgh and Cleveland? Use the tool, one city per call.<｜Assistant｜><think>\n\n</think>\n\n'
+[verl_prefix] turn 1: 214 tokens in 1.5s, finish={'type': 'stop', 'matched': 151645}, ids_from=server
+[verl_prefix] turn 1 text tail: 'k>\n<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_population\n```json\n{"city": "Cleveland"}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>\n\nI have the population of Pittsburgh and need to get Cleveland\'s population next. Once I have both, I\'ll give you the complete answer.<｜end▁of▁sentence｜>'
+[verl_prefix] turn 1: model did not call the tool; using a hand-written call for Pittsburgh   (the driver's regex missed the newline before <｜tool▁call▁end｜>; the model did emit calls)
+[verl_prefix] turn 1: TOOL APPEND FAILED: TypeError: can only concatenate str (not "list") to str
+[verl_prefix] RESULT: append_failed_at_turn=1 forced_turns=[1]
+
+=== verl_main_fu
+[verl_main_fu] no deepseek_v3 parser in this checkout (Unknown tool parser: deepseek_v3); falling back to a regex
+[verl_main_fu] verl=/tmp/verl_main_fu model=deepseek-ai/DeepSeek-R1-0528-Qwen3-8B builder=DeepSeekContinuousTokenBuilder parser=regex eos_id=151645
+[verl_main_fu] turn 1: 241 tokens in 1.6s, finish={'type': 'stop', 'matched': 151645}, ids_from=server
+[verl_main_fu] turn 1 text tail: '\n<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_population\n```json\n{"city": "Cleveland"}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>\n\nI have called the tool for both Pittsburgh and Cleveland as requested. Once I receive the population figures, I can provide the answer.<｜end▁of▁sentence｜>'
+[verl_main_fu] turn 1: model did not call the tool; using a hand-written call for Pittsburgh
+[verl_main_fu] turn 1: tool append 63 tokens -> '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>Pittsburgh: 302,971 residents (2023 census estimate).<｜tool▁output▁end｜><｜tool▁outputs▁end｜>' | matches template
+[verl_main_fu] turn 2: 1 tokens in 0.0s, finish={'type': 'stop', 'matched': 151645}, ids_from=server
+[verl_main_fu] turn 2: model did not call the tool; using a hand-written call for Cleveland
+[verl_main_fu] turn 2: tool append 62 tokens -> '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>Cleveland: 362,656 residents (2023 census estimate).<｜tool▁output▁end｜><｜tool▁outputs▁end｜>' | matches template
+[verl_main_fu] turn 3: 1 tokens in 0.0s, finish={'type': 'stop', 'matched': 151645}, ids_from=server
+[verl_main_fu] RESULT: appends_ok=2 forced_turns=[1, 2] parser=regex answer_has_both_figures=False
+
+=== verl_fix_fu
+[verl_fix_fu] verl=/tmp/verl_fix_fu model=deepseek-ai/DeepSeek-R1-0528-Qwen3-8B builder=DeepSeekContinuousTokenBuilder parser=DeepSeekV3ToolParser eos_id=151645
+[verl_fix_fu] turn 1: 241 tokens in 1.6s, finish={'type': 'stop', 'matched': 151645}, ids_from=server
+[verl_fix_fu] turn 1 text tail: '\n<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_population\n```json\n{"city": "Cleveland"}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>\n\nI have called the tool for both Pittsburgh and Cleveland as requested. Once I receive the population figures, I can provide the answer.<｜end▁of▁sentence｜>'
+[verl_fix_fu] turn 1: model called [('get_population', {'city': 'Pittsburgh'})]   (verl's parser; this run read only the first of the two sections the model wrote, fixed afterwards in the parser: every call between the first opener and the last closer)
+[verl_fix_fu] turn 1: tool append 63 tokens -> '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>Pittsburgh: 302,971 residents (2023 census estimate).<｜tool▁output▁end｜><｜tool▁outputs▁end｜>' | matches template
+[verl_fix_fu] turn 2: 1 tokens in 0.0s, finish={'type': 'stop', 'matched': 151645}, ids_from=server
+[verl_fix_fu] turn 2: model did not call the tool; using a hand-written call for Cleveland
+[verl_fix_fu] turn 2: tool append 62 tokens -> '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>Cleveland: 362,656 residents (2023 census estimate).<｜tool▁output▁end｜><｜tool▁outputs▁end｜>' | matches template
+[verl_fix_fu] turn 3: 90 tokens in 0.6s, finish={'type': 'stop', 'matched': 151645}, ids_from=server
+[verl_fix_fu] final answer tail: " \n\nNow I have both populations. Pittsburgh has 302,971 residents, and Cleveland has 362,656 residents, both from the 2023 census estimate. I should answer the user directly with this information in one sentence, as per the instructions. The user asked for the current populations, and I've provided the latest estimates. I need to make sure my response is concise and accurate.<｜end▁of▁sentence｜>"
+[verl_fix_fu] RESULT: appends_ok=2 forced_turns=[2] parser=verl answer_has_both_figures=True
+
+== Notes
+- Same three checkouts with the default AutoTokenizer (transformers 5.16.1 picks LlamaTokenizerFast for this checkpoint):
+  decode drops every space and the ｜/▁ characters of the DeepSeek markers ('<toolcallsbegin>...', 'Whatarethecurrent...'),
+  so verl's exact-marker parser saw no call while a tolerant regex did. Loading the same files as Qwen2TokenizerFast decodes
+  correctly and the parser works. This is a tokenizer-class issue of that checkpoint under transformers 5, not a verl one.
+- With thinking on (no --nothink) the model spent the whole 900-token budget reasoning on turn 1; with a 2500 budget it
+  produced the call after ~1900 tokens. --nothink prefills an empty think block so the calls come immediately.
+- An earlier run with deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B: its template renders tool_calls only when content is None,
+  so the pre-#7630 append does not raise there (same as DeepSeek-V3), and the 1.5B model neither calls the tool nor uses the
+  result. Kept as a plumbing check only.
+- DeepSeek-R1-0528-Qwen3-8B's template re-opens <｜tool▁outputs▁begin｜> for every tool turn (no conversation-global
+  is_output_first), so the outputs-prefix fix is neutral here ("matches template" on both turns, before and after).
+- GPU time for the whole rollout-level session: about 55 min of H100 (roughly $3.6), most of it environment setup.

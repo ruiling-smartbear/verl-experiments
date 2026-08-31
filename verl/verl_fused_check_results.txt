@@ -1,0 +1,53 @@
+== venv 3.12.6 transformers 5.16.1  (Modal CPU kernel, bare venv: transformers + jinja2, no torch; verl tokenizer package imported standalone)
+0abe38ea  (md5 prefix of verl_fused_check.py as run)
+[fused] verl @8e4a572 (before #7628) vs @3dab856 (the #7628 merge), transformers 5.16.1, tool_agent_loop-shaped trajectories, 24 cases per row
+[FUSED] qwen      Qwen/Qwen2-7B-Instruct         dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FUSED] qwen25    Qwen/Qwen2.5-7B-Instruct       dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FUSED] qwen3     Qwen/Qwen3-8B                  dict         thinking_switch=True after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: n/a
+[FUSED] qwen35    Qwen/Qwen3.5-9B                dict         thinking_switch=True after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FUSED] minimaxm2 MiniMaxAI/MiniMax-M2           dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FUSED] glm47     zai-org/GLM-4.7                dict         thinking_switch=True after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FUSED] gemma4    google/gemma-4-12b-it          dict         thinking_switch=True after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FUSED] gptoss    openai/gpt-oss-20b             dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==0/24 after==0/24
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3        dict         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==8/24 after==8/24
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3        json         thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==8/24 after==8/24
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3        dict+strsyn  thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==8/24 after==8/24
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3        json+strsyn  thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==8/24 after==8/24
+[FUSED] deepseek  deepseek-ai/DeepSeek-R1        dict         thinking_switch=False after==before 0/24 differ=0 only_before=0 only_after=0 neither=24 | ref: n/a
+[ERR]   deepseek deepseek-ai/DeepSeek-R1 dict before=TypeError: can only concatenate str (not "list") to str after=TypeError: can only concatenate str (not "list") to str
+[FUSED] deepseek  deepseek-ai/DeepSeek-R1        json         thinking_switch=False after==before 0/24 differ=0 only_before=0 only_after=0 neither=24 | ref: n/a
+[ERR]   deepseek deepseek-ai/DeepSeek-R1 json before=TypeError: can only concatenate str (not "list") to str after=TypeError: can only concatenate str (not "list") to str
+[FUSED] deepseek  deepseek-ai/DeepSeek-R1        dict+strsyn  thinking_switch=False after==before 0/24 differ=0 only_before=0 only_after=24 neither=0 | ref: n/a
+[TAIL]  deepseek deepseek-ai/DeepSeek-R1 dict+strsyn after: '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>Pittsburgh had 302,971 residents at the latest census estimate.<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[ERR]   deepseek deepseek-ai/DeepSeek-R1 dict+strsyn before=TypeError: can only concatenate str (not "list") to str after=None
+[FUSED] deepseek  deepseek-ai/DeepSeek-R1        json+strsyn  thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==8/24 after==8/24
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3.1      dict         thinking_switch=False after==before 0/24 differ=0 only_before=0 only_after=0 neither=24 | ref: n/a
+[ERR]   deepseek deepseek-ai/DeepSeek-V3.1 dict before=TypeError: can only concatenate str (not "list") to str after=TypeError: can only concatenate str (not "list") to str
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3.1      json         thinking_switch=False after==before 0/24 differ=0 only_before=0 only_after=0 neither=24 | ref: n/a
+[ERR]   deepseek deepseek-ai/DeepSeek-V3.1 json before=TypeError: can only concatenate str (not "list") to str after=TypeError: can only concatenate str (not "list") to str
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3.1      dict+strsyn  thinking_switch=False after==before 0/24 differ=0 only_before=0 only_after=24 neither=0 | ref: n/a
+[TAIL]  deepseek deepseek-ai/DeepSeek-V3.1 dict+strsyn after: '<｜tool▁output▁begin｜>Pittsburgh had 302,971 residents at the latest census estimate.<｜tool▁output▁end｜>'
+[ERR]   deepseek deepseek-ai/DeepSeek-V3.1 dict+strsyn before=TypeError: can only concatenate str (not "list") to str after=None
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3.1      json+strsyn  thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3.2-Exp  dict         thinking_switch=False after==before 0/24 differ=0 only_before=0 only_after=0 neither=24 | ref: n/a
+[ERR]   deepseek deepseek-ai/DeepSeek-V3.2-Exp dict before=TypeError: can only concatenate str (not "list") to str after=TypeError: can only concatenate str (not "list") to str
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3.2-Exp  json         thinking_switch=False after==before 0/24 differ=0 only_before=0 only_after=0 neither=24 | ref: n/a
+[ERR]   deepseek deepseek-ai/DeepSeek-V3.2-Exp json before=TypeError: can only concatenate str (not "list") to str after=TypeError: can only concatenate str (not "list") to str
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3.2-Exp  dict+strsyn  thinking_switch=False after==before 0/24 differ=0 only_before=0 only_after=24 neither=0 | ref: n/a
+[TAIL]  deepseek deepseek-ai/DeepSeek-V3.2-Exp dict+strsyn after: '<｜tool▁output▁begin｜>Pittsburgh had 302,971 residents at the latest census estimate.<｜tool▁output▁end｜>'
+[ERR]   deepseek deepseek-ai/DeepSeek-V3.2-Exp dict+strsyn before=TypeError: can only concatenate str (not "list") to str after=None
+[FUSED] deepseek  deepseek-ai/DeepSeek-V3.2-Exp  json+strsyn  thinking_switch=False after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: before==24/24 after==24/24
+[FUSED] default   Qwen/Qwen3-8B                  dict         thinking_switch=True after==before 24/24 differ=0 only_before=0 only_after=0 neither=0 | ref: n/a
+FUSED_CHECK_DONE
+
+== DeepSeek template probe (same venv)
+DeepSeek-V3 / R1 : namespace(is_first=false, is_tool=false, is_output_first=true, ...)
+  tool message: {%- if ns.is_output_first %}<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>...<｜tool▁output▁end｜>{%- set ns.is_output_first = false %}{%- else %}\n<｜tool▁output▁begin｜>...<｜tool▁output▁end｜>
+  V3 renders tool_calls only when message['content'] is none; R1 when 'tool_calls' in message
+  tool call: ... + tool['function']['arguments'] + ...   (string concatenation)
+DeepSeek-V3.1 / V3.2-Exp: tool call: tool['function']['name'] + '<｜tool▁sep｜>' + tool['function']['arguments'] + '<｜tool▁call▁end｜>' (string concatenation); tool_calls rendered when defined and not none; no is_output_first
+All four: generation prompt guarded by `add_generation_prompt and not ns.is_tool` -> nothing after a tool message
+[V3 dict ] ids==reference only for prior_turns == 0 (8 cases)
+   mismatch case system=True prior=10 calls=1:
+   incremental      : '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>Pittsburgh had 302,971 residents at the latest census estimate.<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+   full-history diff: '\n<｜tool▁output▁begin｜>Pittsburgh had 302,971 residents at the latest census estimate.<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'

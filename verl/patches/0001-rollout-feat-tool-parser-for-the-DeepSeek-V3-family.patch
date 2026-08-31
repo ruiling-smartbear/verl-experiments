@@ -1,0 +1,260 @@
+From 41c5d0f967d33e6d89b24295fb6f40fed0436f22 Mon Sep 17 00:00:00 2001
+From: Ruilin Gao <ruiling@andrew.cmu.edu>
+Date: Mon, 31 Aug 2026 08:17:30 +0000
+Subject: [PATCH] [rollout] feat: tool parser for the DeepSeek-V3 family
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The DeepSeek-V3 family (V3, R1, V3.1, V3.2) writes tool calls with the
+<｜tool▁calls▁begin｜> / <｜tool▁call▁begin｜> markers; V3 and R1 add the call
+type and a fenced JSON block, V3.1 and V3.2 write "name<｜tool▁sep｜>{json}".
+verl had no parser for either layout, so a tool loop with these models never
+saw a tool call. Register DeepSeekV3ToolParser as "deepseek_v3": both layouts,
+parallel calls, invalid JSON kept verbatim for the loop's existing handling.
+---
+ .../test_deepseek_v3_tool_parser_on_cpu.py    | 137 ++++++++++++++++++
+ verl/experimental/agent_loop/tool_parser.py   |  83 +++++++++++
+ 2 files changed, 220 insertions(+)
+ create mode 100644 tests/experimental/agent_loop/test_deepseek_v3_tool_parser_on_cpu.py
+
+diff --git a/tests/experimental/agent_loop/test_deepseek_v3_tool_parser_on_cpu.py b/tests/experimental/agent_loop/test_deepseek_v3_tool_parser_on_cpu.py
+new file mode 100644
+index 0000000..8314205
+--- /dev/null
++++ b/tests/experimental/agent_loop/test_deepseek_v3_tool_parser_on_cpu.py
+@@ -0,0 +1,137 @@
++# Copyright 2026 Bytedance Ltd. and/or its affiliates
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++"""CPU tests for ``DeepSeekV3ToolParser``: the V3 / R1 fenced layout and the V3.1 / V3.2 plain layout."""
++
++import unittest
++
++from verl.experimental.agent_loop.tool_parser import DeepSeekV3ToolParser, ToolParser
++
++
++class _FakeTokenizer:
++    def __init__(self, text: str):
++        self.text = text
++
++    def decode(self, response_ids: list[int], skip_special_tokens: bool = False) -> str:
++        del response_ids, skip_special_tokens
++        return self.text
++
++
++class TestDeepSeekV3ToolParserOnCpu(unittest.IsolatedAsyncioTestCase):
++    def test_registered_under_deepseek_v3(self) -> None:
++        parser = ToolParser.get_tool_parser("deepseek_v3", _FakeTokenizer(""))
++
++        assert isinstance(parser, DeepSeekV3ToolParser)
++        assert parser.stop_token_ids == []
++
++    async def test_v3_fenced_layout(self) -> None:
++        response_text = (
++            "<think>\nI should look this up.\n</think>\n\nLet me check."
++            "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather\n"
++            '```json\n{"city": "Seattle", "unit": "celsius"}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜>'
++            "<｜end▁of▁sentence｜>"
++        )
++        parser = DeepSeekV3ToolParser(_FakeTokenizer(response_text))
++
++        content, tool_calls = await parser.extract_tool_calls([1, 2, 3])
++
++        assert content == "<think>\nI should look this up.\n</think>\n\nLet me check."
++        assert len(tool_calls) == 1
++        assert tool_calls[0].name == "get_weather"
++        assert tool_calls[0].arguments == '{"city": "Seattle", "unit": "celsius"}'
++        assert tool_calls[0].tool_call_id is None
++
++    async def test_v3_parallel_calls(self) -> None:
++        response_text = (
++            "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather\n"
++            '```json\n{"city": "Seattle"}\n```<｜tool▁call▁end｜>\n'
++            "<｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather\n"
++            '```json\n{"city": "Portland"}\n```<｜tool▁call▁end｜><｜tool▁calls▁end｜><｜end▁of▁sentence｜>'
++        )
++        parser = DeepSeekV3ToolParser(_FakeTokenizer(response_text))
++
++        content, tool_calls = await parser.extract_tool_calls([1])
++
++        assert content == ""
++        assert [(call.name, call.arguments) for call in tool_calls] == [
++            ("get_weather", '{"city": "Seattle"}'),
++            ("get_weather", '{"city": "Portland"}'),
++        ]
++
++    async def test_v31_plain_layout(self) -> None:
++        response_text = (
++            "</think>Checking."
++            '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"city": "Seattle"}<｜tool▁call▁end｜>'
++            '<｜tool▁call▁begin｜>search<｜tool▁sep｜>{"query": "forecast", "top_k": 3}<｜tool▁call▁end｜>'
++            "<｜tool▁calls▁end｜><｜end▁of▁sentence｜>"
++        )
++        parser = DeepSeekV3ToolParser(_FakeTokenizer(response_text))
++
++        content, tool_calls = await parser.extract_tool_calls([1])
++
++        assert content == "</think>Checking."
++        assert [(call.name, call.arguments) for call in tool_calls] == [
++            ("get_weather", '{"city": "Seattle"}'),
++            ("search", '{"query": "forecast", "top_k": 3}'),
++        ]
++
++    async def test_one_section_per_call_is_read_as_parallel_calls(self) -> None:
++        response_text = (
++            "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather\n"
++            '```json\n{"city": "Seattle"}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>\n'
++            "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather\n"
++            '```json\n{"city": "Portland"}\n```\n<｜tool▁call▁end｜><｜tool▁calls▁end｜>\n\n'
++            "Both calls are out.<｜end▁of▁sentence｜>"
++        )
++        parser = DeepSeekV3ToolParser(_FakeTokenizer(response_text))
++
++        content, tool_calls = await parser.extract_tool_calls([1])
++
++        assert content == ""
++        assert [(call.name, call.arguments) for call in tool_calls] == [
++            ("get_weather", '{"city": "Seattle"}'),
++            ("get_weather", '{"city": "Portland"}'),
++        ]
++
++    async def test_invalid_json_arguments_are_kept_verbatim(self) -> None:
++        response_text = (
++            '<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"city": Seattle}<｜tool▁call▁end｜>'
++            "<｜tool▁calls▁end｜>"
++        )
++        parser = DeepSeekV3ToolParser(_FakeTokenizer(response_text))
++
++        _, tool_calls = await parser.extract_tool_calls([1])
++
++        assert len(tool_calls) == 1
++        assert tool_calls[0].arguments == '{"city": Seattle}'
++
++    async def test_plain_answer_has_no_tool_calls(self) -> None:
++        response_text = "<think>\nno tool needed\n</think>\n\nSeattle is rainy.<｜end▁of▁sentence｜>"
++        parser = DeepSeekV3ToolParser(_FakeTokenizer(response_text))
++
++        content, tool_calls = await parser.extract_tool_calls([1])
++
++        assert content == response_text
++        assert tool_calls == []
++
++    async def test_unparseable_call_is_skipped(self) -> None:
++        response_text = (
++            "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>garbage without a separator<｜tool▁call▁end｜>"
++            "<｜tool▁calls▁end｜>"
++        )
++        parser = DeepSeekV3ToolParser(_FakeTokenizer(response_text))
++
++        content, tool_calls = await parser.extract_tool_calls([1])
++
++        assert content == ""
++        assert tool_calls == []
+diff --git a/verl/experimental/agent_loop/tool_parser.py b/verl/experimental/agent_loop/tool_parser.py
+index 084dfcf..d066d53 100644
+--- a/verl/experimental/agent_loop/tool_parser.py
++++ b/verl/experimental/agent_loop/tool_parser.py
+@@ -648,6 +648,89 @@ class KimiToolParser(ToolParser):
+         return content, function_calls
+ 
+ 
++@ToolParser.register("deepseek_v3")
++class DeepSeekV3ToolParser(ToolParser):
++    """Tool parser for the DeepSeek-V3 family (V3, R1, V3.1, V3.2) special-token function calls.
++
++    Two layouts share the same section and call markers. V3 and R1 write the call type,
++    the name and a fenced JSON block::
++
++        <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
++        ```json
++        {"city": "Seattle"}
++        ```<｜tool▁call▁end｜><｜tool▁calls▁end｜>
++
++    V3.1 and V3.2 drop the type and the fence::
++
++        <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{"city": "Seattle"}<｜tool▁call▁end｜>
++        <｜tool▁calls▁end｜>
++
++    The models emit ``<｜end▁of▁sentence｜>`` right after the section, so no extra stop
++    token is needed. Text before the section is returned as content.
++    """
++
++    def __init__(self, tokenizer) -> None:
++        super().__init__(tokenizer)
++        self.tool_calls_start_token = "<｜tool▁calls▁begin｜>"
++        self.tool_calls_end_token = "<｜tool▁calls▁end｜>"
++        self.tool_call_regex = regex.compile(r"<｜tool▁call▁begin｜>(.*?)<｜tool▁call▁end｜>", regex.DOTALL)
++        # V3 / R1: "<type><｜tool▁sep｜><name>\n```json\n<arguments>\n```"
++        self.fenced_call_regex = regex.compile(
++            r"^\s*(?:[^\s<｜]+)<｜tool▁sep｜>\s*(?P<name>[^\s<｜]+)\s*```(?:json)?\s*(?P<arguments>.*?)\s*```\s*$",
++            regex.DOTALL,
++        )
++        # V3.1 / V3.2: "<name><｜tool▁sep｜><arguments>"
++        self.plain_call_regex = regex.compile(
++            r"^\s*(?P<name>[^\s<｜]+)<｜tool▁sep｜>\s*(?P<arguments>.*?)\s*$",
++            regex.DOTALL,
++        )
++
++    @staticmethod
++    def _normalize_arguments(raw_arguments: str) -> str:
++        try:
++            return json.dumps(json.loads(raw_arguments), ensure_ascii=False)
++        except Exception:
++            logger.warning("DeepSeek tool-call arguments are not valid JSON; keeping them verbatim.")
++            return raw_arguments
++
++    def _parse_tool_call(self, tool_call_text: str) -> Optional[FunctionCall]:
++        layout = self.fenced_call_regex if "```" in tool_call_text else self.plain_call_regex
++        match = layout.match(tool_call_text)
++        if match is None:
++            return None
++        return FunctionCall(
++            name=match.group("name"),
++            arguments=self._normalize_arguments(match.group("arguments")),
++        )
++
++    @rollout_trace_op
++    async def extract_tool_calls(
++        self, responses_ids: list[int], tools: list[OpenAIFunctionToolSchema] = None
++    ) -> tuple[str, list[FunctionCall]]:
++        del tools
++        loop = get_event_loop()
++        text = await loop.run_in_executor(
++            None,
++            lambda: self.tokenizer.decode(responses_ids, skip_special_tokens=False),
++        )
++        if self.tool_calls_start_token not in text or self.tool_calls_end_token not in text:
++            return text, []
++
++        function_calls: list[FunctionCall] = []
++        section_start = text.find(self.tool_calls_start_token)
++        # Everything between the first section opener and the last closer: distilled
++        # checkpoints sometimes emit one section per call instead of one for all.
++        section_end = text.rfind(self.tool_calls_end_token)
++        for tool_call_text in self.tool_call_regex.findall(text[section_start:section_end]):
++            function_call = self._parse_tool_call(tool_call_text)
++            if function_call is None:
++                logger.error(f"Failed to decode DeepSeek tool call: {tool_call_text[:200]!r}")
++                continue
++            function_calls.append(function_call)
++
++        return text[:section_start], function_calls
++
++
+ @ToolParser.register("deepseek_v4")
+ class DeepSeekV4ToolParser(ToolParser):
+     """Tool parser for DeepSeek-V4 DSML function calls.
+-- 
+2.43.0
+

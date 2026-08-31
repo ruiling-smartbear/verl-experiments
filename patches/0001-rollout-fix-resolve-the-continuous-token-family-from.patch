@@ -1,0 +1,215 @@
+From d19f1bfa406b119575bba00dfd23523229fb5b64 Mon Sep 17 00:00:00 2001
+From: Ruilin Gao <ruiling@andrew.cmu.edu>
+Date: Mon, 31 Aug 2026 15:16:42 +0000
+Subject: [PATCH] [rollout] fix: resolve the Continuous Token family from
+ tokenizer special tokens for the DeepSeek-R1 distills
+
+DeepSeek-R1 distills keep Qwen model_type values (qwen2/qwen3) but ship
+DeepSeek's tokenizer, which renames <|im_end|> to its own end-of-sentence
+marker. Since #6804 the builder family is an exact model_type lookup, so
+QwenContinuousTokenBuilder.__init__ raises "Tokenizer does not define
+required token '<|im_end|>'" before any rollout starts (#7637).
+
+When the builder inferred with auto cannot be constructed because a
+required token is missing, consult an exact special-token key on the
+tokenizer itself: both DeepSeek role/eos markers defined and <|im_end|>
+not defined selects the DeepSeek builder, so #7630 applies to these
+checkpoints directly. Any other tokenizer re-raises, and an explicitly
+requested family still raises.
+---
+ tests/utils/test_continuous_token_on_cpu.py   | 63 +++++++++++++++++++
+ verl/utils/tokenizer/continuous_token.py      | 11 +++-
+ .../tokenizer/continuous_token_wiring.py      | 57 ++++++++++++++++-
+ 3 files changed, 129 insertions(+), 2 deletions(-)
+
+diff --git a/tests/utils/test_continuous_token_on_cpu.py b/tests/utils/test_continuous_token_on_cpu.py
+index 8d2e9c6..2af2d53 100644
+--- a/tests/utils/test_continuous_token_on_cpu.py
++++ b/tests/utils/test_continuous_token_on_cpu.py
+@@ -33,6 +33,7 @@ from verl.utils.tokenizer.continuous_token import (
+ from verl.utils.tokenizer.continuous_token_wiring import (
+     CONTINUOUS_TOKEN_BUILDER_FAMILIES,
+     ContinuousTokenModelFamily,
++    _family_from_tokenizer_special_tokens,
+     create_continuous_token_builder,
+     get_continuous_token_builder_class,
+     infer_continuous_token_model_family,
+@@ -276,6 +277,26 @@ class _DeepSeekBoundaryTokenizer(_TemplateTokenizer):
+         return rendered
+ 
+ 
++class _DistillTokenizer(_DeepSeekBoundaryTokenizer):
++    """DeepSeek-R1 distill of Qwen: the root config keeps a Qwen ``model_type`` but the
++    checkpoint ships DeepSeek's tokenizer and chat template, in which ``<|im_end|>``
++    does not exist (renamed to ``<｜end▁of▁sentence｜>``)."""
++
++    name_or_path = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
++    unk_token_id = None
++
++    def __init__(self):
++        super().__init__()
++        self.assistant_id = 2
++
++    def convert_tokens_to_ids(self, token):
++        if token == "<｜end▁of▁sentence｜>":
++            return self.eos_id
++        if token == "<｜Assistant｜>":
++            return self.assistant_id
++        return None
++
++
+ class _MissingSpecialTokenTokenizer(_TemplateTokenizer):
+     def convert_tokens_to_ids(self, token):
+         return None
+@@ -470,6 +491,48 @@ def test_unknown_model_with_non_multimodal_processor_uses_default_text_builder(c
+     assert "default" in caplog.text
+ 
+ 
++def test_auto_family_resolves_deepseek_from_tokenizer_when_a_required_token_is_missing(caplog):
++    tokenizer = _DistillTokenizer()
++    with caplog.at_level(logging.WARNING, logger="verl.utils.tokenizer.continuous_token_wiring"):
++        builder = create_continuous_token_builder(tokenizer, hf_model_type="qwen2")
++
++    assert type(builder) is DeepSeekContinuousTokenBuilder
++    assert "QwenContinuousTokenBuilder" in caplog.text
++    assert "<|im_end|>" in caplog.text
++    assert "DeepSeekContinuousTokenBuilder" in caplog.text
++
++    # The DeepSeek builder renders the distill's concatenating template: tool appends
++    # splice the synthetic call's arguments in by string concatenation.
++    previous_messages = [
++        {"role": "user", "content": "question"},
++        {
++            "role": "assistant",
++            "content": "",
++            "tool_calls": [
++                {"id": "call_0", "type": "function", "function": {"name": "lookup", "arguments": {"q": "x"}}}
++            ],
++        },
++    ]
++    updated_messages = previous_messages + [{"role": "tool", "content": "answer", "tool_call_id": "call_0"}]
++    incremental = builder.tokenize_non_assistant_incremental_messages(previous_messages, updated_messages)
++    assert incremental == [ord(char) for char in "<tool_output_begin>answer<tool_output_end>"]
++
++
++def test_tokenizer_special_token_key_requires_every_deepseek_marker():
++    # ``<｜end▁of▁sentence｜>`` alone (defined on this fake, ``<｜Assistant｜>`` resolves
++    # to unk) must not identify the family, and the original construction error surfaces.
++    assert _family_from_tokenizer_special_tokens(_DeepSeekBoundaryTokenizer()) is None
++    assert _family_from_tokenizer_special_tokens(_DistillTokenizer()) is ContinuousTokenModelFamily.DEEPSEEK
++
++    with pytest.raises(ValueError, match="required token '<\\|im_end\\|>'"):
++        create_continuous_token_builder(_MissingSpecialTokenTokenizer(), hf_model_type="qwen2")
++
++
++def test_explicit_family_does_not_fall_back_when_a_required_token_is_missing():
++    with pytest.raises(ValueError, match="required token '<\\|im_end\\|>'"):
++        create_continuous_token_builder(_DistillTokenizer(), model_family="qwen")
++
++
+ def test_default_builder_creation_forwards_kwargs():
+     builder = create_continuous_token_builder(
+         _TemplateTokenizer(),
+diff --git a/verl/utils/tokenizer/continuous_token.py b/verl/utils/tokenizer/continuous_token.py
+index 6851f27..bcc95bf 100644
+--- a/verl/utils/tokenizer/continuous_token.py
++++ b/verl/utils/tokenizer/continuous_token.py
+@@ -672,10 +672,19 @@ class Gemma4ContinuousTokenBuilder(ContinuousTokenBuilder):
+         )
+ 
+ 
++class MissingRequiredTokenError(ValueError):
++    """A special token a model-specific builder depends on is absent from the tokenizer.
++
++    Raised at builder construction. Checkpoints that pair a registered architecture
++    with another vendor's tokenizer hit this — the DeepSeek-R1 distills keep Qwen
++    ``model_type`` values but rename ``<|im_end|>`` away.
++    """
++
++
+ def require_token_id(tokenizer: Any, token: str) -> int:
+     token_id = tokenizer.convert_tokens_to_ids(token)
+     if token_id is None:
+-        raise ValueError(f"Tokenizer does not define required token {token!r}")
++        raise MissingRequiredTokenError(f"Tokenizer does not define required token {token!r}")
+     if isinstance(token_id, list):
+         if len(token_id) != 1:
+             raise ValueError(f"Tokenizer returned multiple ids for required token {token!r}: {token_id!r}")
+diff --git a/verl/utils/tokenizer/continuous_token_wiring.py b/verl/utils/tokenizer/continuous_token_wiring.py
+index 446348f..8288ee6 100644
+--- a/verl/utils/tokenizer/continuous_token_wiring.py
++++ b/verl/utils/tokenizer/continuous_token_wiring.py
+@@ -32,6 +32,7 @@ from .continuous_token import (
+     KimiVLContinuousTokenBuilder,
+     MiniMaxContinuousTokenBuilder,
+     MiniMaxVLContinuousTokenBuilder,
++    MissingRequiredTokenError,
+     QwenContinuousTokenBuilder,
+     QwenVLContinuousTokenBuilder,
+     VLContinuousTokenBuilder,
+@@ -307,7 +308,61 @@ def create_continuous_token_builder(
+             f"Ensure the processor is loaded for vision-language models."
+         )
+     logger.info("Creating Continuous Token builder: family=%s class=%s", resolved_family, builder_cls)
+-    return builder_cls(tokenizer, chat_template_kwargs=chat_template_kwargs, **builder_kwargs)
++    try:
++        return builder_cls(tokenizer, chat_template_kwargs=chat_template_kwargs, **builder_kwargs)
++    except MissingRequiredTokenError as exc:
++        if _normalize_model_family(model_family) != ContinuousTokenModelFamily.AUTO:
++            raise
++        # The inferred builder cannot work with this tokenizer: the checkpoint pairs a
++        # registered architecture with another vendor's tokenizer. Fall back to an exact
++        # special-token lookup on the tokenizer itself, which identifies such
++        # checkpoints (the DeepSeek-R1 distills keep Qwen model_type values but ship
++        # DeepSeek's tokenizer and chat template).
++        token_family = _family_from_tokenizer_special_tokens(tokenizer)
++        if token_family is None:
++            raise
++        token_builder_cls = get_continuous_token_builder_class(token_family)
++        logger.warning(
++            "%s inferred from config.json model_type=%r cannot be constructed (%s); "
++            "the tokenizer's special tokens exactly match family %s, using %s instead.",
++            builder_cls.__name__,
++            _normalize_hf_model_type(hf_model_type),
++            exc,
++            token_family,
++            token_builder_cls.__name__,
++        )
++        return token_builder_cls(tokenizer, chat_template_kwargs=chat_template_kwargs, **builder_kwargs)
++
++
++# The DeepSeek chat lineage renames ChatML's ``<|im_end|>`` away and defines these
++# role/eos markers instead. Reusing the builder's own constants keeps the key aligned
++# with what DeepSeekContinuousTokenBuilder validates at construction.
++_DEEPSEEK_TOKENIZER_KEY_TOKENS = (
++    DeepSeekContinuousTokenBuilder._EOS_TOKEN,
++    DeepSeekContinuousTokenBuilder._ASSISTANT_TOKEN,
++)
++_CHATML_IM_END_TOKEN = "<|im_end|>"
++
++
++def _family_from_tokenizer_special_tokens(tokenizer: Any) -> ContinuousTokenModelFamily | None:
++    """Exact special-token key for tokenizers that identify a family themselves.
++
++    Only consulted when the builder inferred from ``model_type`` cannot be
++    constructed. Matching is exact on token presence; nothing is guessed from
++    repository or tokenizer names.
++    """
++    if all(
++        _tokenizer_defines_token(tokenizer, token) for token in _DEEPSEEK_TOKENIZER_KEY_TOKENS
++    ) and not _tokenizer_defines_token(tokenizer, _CHATML_IM_END_TOKEN):
++        return ContinuousTokenModelFamily.DEEPSEEK
++    return None
++
++
++def _tokenizer_defines_token(tokenizer: Any, token: str) -> bool:
++    token_id = tokenizer.convert_tokens_to_ids(token)
++    if token_id is None:
++        return False
++    return token_id != getattr(tokenizer, "unk_token_id", None)
+ 
+ 
+ def _is_multimodal_processor(processor: Any | None) -> bool:
+-- 
+2.43.0
+

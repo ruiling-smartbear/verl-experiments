@@ -1,0 +1,90 @@
+== Modal, bare venv (transformers 5.16.1 + jinja2, no torch), 2026-08-31
+== script: verl_distill_fix_check.py (this repo), patches: patches/ @96d5d26
+== fix1 = 0001-rollout-fix-fall-back-to-the-default-continuous-toke.patch (FallbackContinuousTokenBuilder)
+== fix2 = 0001-rollout-fix-resolve-the-continuous-token-family-from.patch (tokenizer special-token key)
+== DeepSeek-R1-0528-Qwen3-8B loaded as Qwen2TokenizerFast for decode display (ids unaffected); see appendix B
+
+[trees] transformers 5.16.1 | main: 9c76436 | fix1: 9c76436 + patch (3 files changed, 124 insertions(+), 2 deletions(-)) | fix2: 9c76436 + patch (3 files changed, 129 insertions(+), 2 deletions(-))
+
+--- [ID] identity on models that work on main (24 tool-append cases per row)
+[ID]  qwen      Qwen/Qwen2-7B-Instruct            dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  qwen25    Qwen/Qwen2.5-7B-Instruct          dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  qwen3     Qwen/Qwen3-8B                     dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  qwen35    Qwen/Qwen3.5-9B                   dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  minimaxm2 MiniMaxAI/MiniMax-M2              dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  glm47     zai-org/GLM-4.7                   dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  gemma4    google/gemma-4-12b-it             dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  gptoss    openai/gpt-oss-20b                dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-V3           dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-V3           json  fix1==main (24/24) fix2==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-R1           dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-R1           json  fix1==main (24/24) fix2==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-V3.1         dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-V3.1         json  fix1==main (24/24) fix2==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-V3.2-Exp     dict  fix1==main (24/24) fix2==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-V3.2-Exp     json  fix1==main (24/24) fix2==main (24/24)
+[ID]  default   Qwen/Qwen3-8B                     dict  fix1==main (24/24) fix2==main (24/24)
+
+--- [SEL]/[RND] factory selection and renders (create_continuous_token_builder(tok, hf_model_type=config.model_type);
+--- render = first / third tool-turn append vs the template's full-conversation delta)
+[SEL] deepseek-ai/DeepSeek-R1-0528-Qwen3-8B      main: model_type=qwen3 -> ValueError: Tokenizer does not define required token '<|im_end|>'
+[SEL] deepseek-ai/DeepSeek-R1-0528-Qwen3-8B      fix1: model_type=qwen3 -> FallbackContinuousTokenBuilder
+[RND]   turn 1: == template: True | '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 0<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[RND]   turn 3: == template: True | '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 2<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[SEL] deepseek-ai/DeepSeek-R1-0528-Qwen3-8B      fix2: model_type=qwen3 -> DeepSeekContinuousTokenBuilder
+[RND]   turn 1: == template: True | '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 0<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[RND]   turn 3: == template: True | '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 2<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-7B    main: model_type=qwen2 -> ValueError: Tokenizer does not define required token '<|im_end|>'
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-7B    fix1: model_type=qwen2 -> FallbackContinuousTokenBuilder
+[RND]   turn 1: == template: True | '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 0<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[RND]   turn 3: == template: False | '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 2<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'   (is_output_first, #7636)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-7B    fix2: model_type=qwen2 -> DeepSeekContinuousTokenBuilder
+[RND]   turn 1: == template: True | '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 0<｜tool▁output▁end｜><｜tool▁outputs▁end｜>'
+[RND]   turn 3: == template: False | same form (is_output_first, #7636; fixed once #7636 lands, fix2 routes these checkpoints to the DeepSeek builder)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B  main: model_type=qwen2 -> ValueError: Tokenizer does not define required token '<|im_end|>'
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B  fix1: model_type=qwen2 -> FallbackContinuousTokenBuilder
+[RND]   turn 1: == template: True | turn 3: == template: False   (same pattern as the 7B)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B  fix2: model_type=qwen2 -> DeepSeekContinuousTokenBuilder
+[RND]   turn 1: == template: True | turn 3: == template: False   (same pattern as the 7B)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Llama-8B   main: model_type=llama -> ContinuousTokenBuilder      (constructs on main; unchanged by both fixes)
+[RND]   turn 1: == template: True | turn 3: == template: False   (is_output_first — present on main too)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Llama-8B   fix1: model_type=llama -> ContinuousTokenBuilder      (same renders as main)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Llama-8B   fix2: model_type=llama -> ContinuousTokenBuilder      (same renders as main)
+[SEL] Qwen/Qwen3-8B                              main/fix1/fix2: model_type=qwen3 -> QwenContinuousTokenBuilder, turns 1 and 3 == template on all three
+[SEL] Qwen/Qwen2.5-7B-Instruct                   main/fix1/fix2: model_type=qwen2 -> QwenContinuousTokenBuilder, turns 1 and 3 == template on all three
+[SEL] deepseek-ai/DeepSeek-V3.1                  main/fix1/fix2: model_type=deepseek_v3 -> DeepSeekContinuousTokenBuilder, turns 1 and 3 == template on all three
+
+--- [KEY] special-token key inputs (id, or absent(raw)); key = eos and assistant defined, im_end not
+[KEY] deepseek-ai/DeepSeek-R1-0528-Qwen3-8B      eos=151645         assistant=151670         im_end=absent(None)   key_fires=True
+[KEY] deepseek-ai/DeepSeek-R1-Distill-Qwen-7B    eos=151643         assistant=151645         im_end=absent(None)   key_fires=True
+[KEY] deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B  eos=151643         assistant=151645         im_end=absent(None)   key_fires=True
+[KEY] deepseek-ai/DeepSeek-R1-Distill-Llama-8B   eos=128001         assistant=128012         im_end=absent(None)   key_fires=True   (never consulted: llama is unregistered, the default builder constructs)
+[KEY] Qwen/Qwen3-8B                              eos=absent(None)   assistant=absent(None)   im_end=151645         key_fires=False
+[KEY] Qwen/Qwen2.5-7B-Instruct                   eos=absent(None)   assistant=absent(None)   im_end=151645         key_fires=False
+[KEY] deepseek-ai/DeepSeek-V3.1                  eos=1              assistant=128804         im_end=absent(None)   key_fires=True   (never consulted: deepseek_v3 constructs its own builder)
+[KEY] deepseek-ai/DeepSeek-R1                    eos=1              assistant=128804         im_end=absent(None)   key_fires=True   (never consulted: deepseek_v3 constructs its own builder)
+
+DISTILL_FIX_CHECK_DONE
+
+== Appendix A: the rejected variant — JSON-string synthetic arguments in the BASE class
+== (option 1 as first sketched in #7637). Same harness, first run of the day:
+[ID]  qwen35    Qwen/Qwen3.5-9B                   dict  fix1==DIFFERS (0/24) fix2==main (24/24)
+[ID]  minimaxm2 MiniMaxAI/MiniMax-M2              dict  fix1==DIFFERS (0/24) fix2==main (24/24)
+[ID]  glm47     zai-org/GLM-4.7                   dict  fix1==DIFFERS (0/24) fix2==main (24/24)
+(every other row 24/24 identical)
+Failure mode, single-case probe on the base-string-args tree:
+  qwen35    RAISES: TemplateError   | System message must be at the beginning.
+  minimaxm2 RAISES: UndefinedError  | 'str object' has no attribute 'items'
+  glm47     RAISES: UndefinedError  | 'str object' has no attribute 'items'
+These templates render the synthetic tool-call arguments as a mapping, so the string form
+cannot go into the base class; the final fix1 scopes it to FallbackContinuousTokenBuilder,
+after which the three rows are 24/24 identical again (see [ID] above).
+
+== Appendix B: why DeepSeek-R1-0528-Qwen3-8B is loaded as Qwen2TokenizerFast here
+Its tokenizer_config.json on the Hub declares "tokenizer_class": "LlamaTokenizerFast"
+(checked 2026-08-31; the older R1-Distill-Qwen-1.5B declares the same, Qwen/Qwen3-8B
+declares Qwen2Tokenizer). Under transformers 5 that load path decodes this checkpoint's
+ids without spaces and strips the ｜/▁ marker characters, which breaks marker-exact tool
+parsing downstream; loading the same files as Qwen2TokenizerFast decodes correctly and
+yields identical ids. None of the checkpoint's 27 Hub discussions mention it. Outside
+verl's scope — a checkpoint-side issue.

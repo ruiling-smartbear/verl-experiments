@@ -22,7 +22,7 @@ import sys
 import tempfile
 
 UPSTREAM_REPO = "https://github.com/verl-project/verl"
-MAIN_SHA = "9c76436b93a2fc4d24f9d17d9265b3b467a30f4f"  # upstream main, 2026-08-31
+MAIN_SHA = "9c7643648f1e1e109dd30da2da3cf94e1317b229"  # upstream main, 2026-08-31
 PATCHES = "https://raw.githubusercontent.com/ruiling-smartbear/verl-experiments/e93bbc014e7d983698194b89c7c5cbb8101d54d6/patches/"
 FIX1_PATCH = PATCHES + "0001-rollout-fix-fall-back-to-the-default-continuous-toke.patch"
 FIX2_PATCH = PATCHES + "0001-rollout-fix-resolve-the-continuous-token-family-from.patch"

@@ -1,27 +1,27 @@
-# Experiments behind my open-source work
+# Experiments behind my verl contributions
 
-Scripts, raw outputs and write-ups for the verl and sglang-omni issues and PRs listed below, so anyone reviewing them can rerun the numbers. `verl/` holds the tokenizer / chat-template experiments and the rollout-level checks, `sglang-omni/` the MOSS-TD GPU benchmarks. Everything ran on tokenizer files only unless marked GPU; each script clones the repositories it compares, so it is reproducible on its own.
+Scripts, raw outputs and write-ups for the verl issues and PRs listed below, so anyone reviewing them can rerun the numbers: the continuous-token generation-prompt experiments (#7617, #7628), the DeepSeek tool-append fix (#7630) and its follow-ups (#7635, #7636). Everything ran on tokenizer files only unless marked GPU; each script clones the verl commits it compares, so it is reproducible on its own.
 
-Older links in those threads point at the `bench/975` branch of my sglang-omni fork, where this material first lived; that branch is kept unchanged so the links keep working. New material lands here.
+Older links in those threads point at the `bench/975` branch of my sglang-omni fork, where this material first lived; that branch is kept unchanged so the links keep working.
 
 ## verl #7617 — generation-prompt delta in incremental tokenization
 
 | question | script | write-up / where the numbers went |
 |---|---|---|
-| Can the generation prompt come out of the **last append group's render** (`add_generation_prompt=True` on that render) instead of two full-history renders? | [`verl_fold_probe_harness.py`](verl/verl_fold_probe_harness.py) (trajectories shaped like `tool_agent_loop`'s, 24 cases per model, Gemma 4 included, full-history reference column); [`verl_fold_probe.py`](verl/verl_fold_probe.py) is the earlier API-shaped matrix | [`generation_prompt_fold_experiment.md`](verl/generation_prompt_fold_experiment.md) — 192 template-rendered cases over 8 rows (7 distinct templates), 0 differences; posted on [#7617](https://github.com/verl-project/verl/issues/7617#issuecomment-5473497404) |
-| After the merge: does the #7628 merge commit (3dab856) reproduce its parent's (8e4a572) token ids, and what happens on the DeepSeek family (V3, R1, V3.1, V3.2-Exp)? | [`verl_fused_check.py`](verl/verl_fused_check.py) | [`generation_prompt_fold_experiment.md#after-the-merge`](verl/generation_prompt_fold_experiment.md#after-the-merge--7628-vs-its-parent), raw output in [`verl_fused_check_results.txt`](verl/verl_fused_check_results.txt); posted on [#7628](https://github.com/verl-project/verl/pull/7628) |
-| Does the DeepSeek fix (synthetic tool-call arguments as a JSON string) render tool appends on the real V3-family tokenizers and leave every other builder untouched? | [`verl_deepseek_fix_check.py`](verl/verl_deepseek_fix_check.py) | [`generation_prompt_fold_experiment.md#the-fix-checked`](verl/generation_prompt_fold_experiment.md#the-fix-checked), raw output in [`verl_deepseek_fix_check_results.txt`](verl/verl_deepseek_fix_check_results.txt); opened as [#7630](https://github.com/verl-project/verl/pull/7630) |
-| Follow-ups: DeepSeek V3-family tool parser + tool outputs after the first tool turn — tokenizer-level check of the prefix change against main | [`verl_deepseek_followup_check.py`](verl/verl_deepseek_followup_check.py), patches in [`verl/patches/`](verl/patches) | [`generation_prompt_fold_experiment.md#follow-ups-after-7630-not-yet-submitted`](verl/generation_prompt_fold_experiment.md#follow-ups-after-7630-not-yet-submitted), raw output in [`verl_deepseek_followup_check_results.txt`](verl/verl_deepseek_followup_check_results.txt) |
-| Rollout-level check on a real model (DeepSeek-R1-0528-Qwen3-8B, sglang, 1× H100): before #7630 / main / main + patches | [`verl_deepseek_e2e.py`](verl/verl_deepseek_e2e.py) | same section; raw output in [`verl_deepseek_e2e_results.txt`](verl/verl_deepseek_e2e_results.txt) |
-| Is the delta **constant across turns** per family, and does it depend on the final role? | [`verl_cacheability_check.py`](verl/verl_cacheability_check.py) | table below; the role dependence (DeepSeek emits nothing after a tool output) is posted on [#7617](https://github.com/verl-project/verl/issues/7617#issuecomment-5473506807) |
-| Does **caching** the delta (keyed by final role + tools, revalidated) reproduce main's token ids, and how much does it save? | [`verl_cache_bench.py`](verl/verl_cache_bench.py) | table in the [#7619](https://github.com/verl-project/verl/pull/7619) description |
-| What does each template's `add_generation_prompt` guard actually read? | [`verl_template_snippets.py`](verl/verl_template_snippets.py) | Jinja table in [`generation_prompt_experiment.md`](verl/generation_prompt_experiment.md) |
-| Where exactly does DeepSeek-V3.2-Exp's template fail on verl's synthetic tool prefix? | [`verl_deepseek_template.py`](verl/verl_deepseek_template.py) | `arguments: {}` (a mapping) concatenated as a string — `TypeError: can only concatenate str (not "dict")` |
-| Why does the Gemma 4 tokenizer not load, and what does its generation-prompt guard read? | [`verl_gemma4_load.py`](verl/verl_gemma4_load.py) | needs transformers ≥ 5; the guard reads `ns.prev_message_type` (nothing after a tool response) |
-| Why do the three gpt-oss renders disagree on a tool-final append? | [`verl_gptoss_detail.py`](verl/verl_gptoss_detail.py) | decoded diff in both write-ups: the tool path is hand-built, and tool content is not JSON-encoded |
-| Earlier: bounded pseudo-tail render vs full-history render, 28 scenarios × 4 Qwen models, 50/100/200-turn timings | [`verl_template_check.py`](verl/verl_template_check.py) | superseded by the cache design; numbers were in the first version of the #7619 description |
+| Can the generation prompt come out of the **last append group's render** (`add_generation_prompt=True` on that render) instead of two full-history renders? | [`verl_fold_probe_harness.py`](verl_fold_probe_harness.py) (trajectories shaped like `tool_agent_loop`'s, 24 cases per model, Gemma 4 included, full-history reference column); [`verl_fold_probe.py`](verl_fold_probe.py) is the earlier API-shaped matrix | [`generation_prompt_fold_experiment.md`](generation_prompt_fold_experiment.md) — 192 template-rendered cases over 8 rows (7 distinct templates), 0 differences; posted on [#7617](https://github.com/verl-project/verl/issues/7617#issuecomment-5473497404) |
+| After the merge: does the #7628 merge commit (3dab856) reproduce its parent's (8e4a572) token ids, and what happens on the DeepSeek family (V3, R1, V3.1, V3.2-Exp)? | [`verl_fused_check.py`](verl_fused_check.py) | [`generation_prompt_fold_experiment.md#after-the-merge`](generation_prompt_fold_experiment.md#after-the-merge--7628-vs-its-parent), raw output in [`verl_fused_check_results.txt`](verl_fused_check_results.txt); posted on [#7628](https://github.com/verl-project/verl/pull/7628) |
+| Does the DeepSeek fix (synthetic tool-call arguments as a JSON string) render tool appends on the real V3-family tokenizers and leave every other builder untouched? | [`verl_deepseek_fix_check.py`](verl_deepseek_fix_check.py) | [`generation_prompt_fold_experiment.md#the-fix-checked`](generation_prompt_fold_experiment.md#the-fix-checked), raw output in [`verl_deepseek_fix_check_results.txt`](verl_deepseek_fix_check_results.txt); opened as [#7630](https://github.com/verl-project/verl/pull/7630) |
+| Follow-ups: DeepSeek V3-family tool parser + tool outputs after the first tool turn — tokenizer-level check of the prefix change against main | [`verl_deepseek_followup_check.py`](verl_deepseek_followup_check.py), patches in [`verl/patches/`](patches) | [`generation_prompt_fold_experiment.md#follow-ups-after-7630-not-yet-submitted`](generation_prompt_fold_experiment.md#follow-ups-after-7630-not-yet-submitted), raw output in [`verl_deepseek_followup_check_results.txt`](verl_deepseek_followup_check_results.txt) |
+| Rollout-level check on a real model (DeepSeek-R1-0528-Qwen3-8B, sglang, 1× H100): before #7630 / main / main + patches | [`verl_deepseek_e2e.py`](verl_deepseek_e2e.py) | same section; raw output in [`verl_deepseek_e2e_results.txt`](verl_deepseek_e2e_results.txt) |
+| Is the delta **constant across turns** per family, and does it depend on the final role? | [`verl_cacheability_check.py`](verl_cacheability_check.py) | table below; the role dependence (DeepSeek emits nothing after a tool output) is posted on [#7617](https://github.com/verl-project/verl/issues/7617#issuecomment-5473506807) |
+| Does **caching** the delta (keyed by final role + tools, revalidated) reproduce main's token ids, and how much does it save? | [`verl_cache_bench.py`](verl_cache_bench.py) | table in the [#7619](https://github.com/verl-project/verl/pull/7619) description |
+| What does each template's `add_generation_prompt` guard actually read? | [`verl_template_snippets.py`](verl_template_snippets.py) | Jinja table in [`generation_prompt_experiment.md`](generation_prompt_experiment.md) |
+| Where exactly does DeepSeek-V3.2-Exp's template fail on verl's synthetic tool prefix? | [`verl_deepseek_template.py`](verl_deepseek_template.py) | `arguments: {}` (a mapping) concatenated as a string — `TypeError: can only concatenate str (not "dict")` |
+| Why does the Gemma 4 tokenizer not load, and what does its generation-prompt guard read? | [`verl_gemma4_load.py`](verl_gemma4_load.py) | needs transformers ≥ 5; the guard reads `ns.prev_message_type` (nothing after a tool response) |
+| Why do the three gpt-oss renders disagree on a tool-final append? | [`verl_gptoss_detail.py`](verl_gptoss_detail.py) | decoded diff in both write-ups: the tool path is hand-built, and tool content is not JSON-encoded |
+| Earlier: bounded pseudo-tail render vs full-history render, 28 scenarios × 4 Qwen models, 50/100/200-turn timings | [`verl_template_check.py`](verl_template_check.py) | superseded by the cache design; numbers were in the first version of the #7619 description |
 
-### Delta constant across 20 tool turns? ([`verl_cacheability_check.py`](verl/verl_cacheability_check.py), main @a0bd149)
+### Delta constant across 20 tool turns? ([`verl_cacheability_check.py`](verl_cacheability_check.py), main @a0bd149)
 
 | family | model | constant over 20 turns | same for tool / user / system final |
 |---|---|---|---|
@@ -36,7 +36,7 @@ Older links in those threads point at the `bench/975` branch of my sglang-omni f
 
 Not loadable: GLM-5, Gemma-4/3 (gated), DeepSeek-V4 (gated); VL builders need a processor.
 
-### Cache vs main, 100-turn tool loops ([`verl_cache_bench.py`](verl/verl_cache_bench.py))
+### Cache vs main, 100-turn tool loops ([`verl_cache_bench.py`](verl_cache_bench.py))
 
 | builder | model | main | cache branch | last turn | ids |
 |---|---|---|---|---|---|
@@ -48,24 +48,3 @@ Not loadable: GLM-5, Gemma-4/3 (gated), DeepSeek-V4 (gated); VL builders need a 
 | deepseek | DeepSeek-V3 | 4.80s | 0.22s | 96 ms → 0.7 ms | identical |
 | default | Qwen3-8B | 6.14s | 0.35s | 112 ms → 1.6 ms | identical |
 
-## sglang-omni #1840 — output budget for short audio (GPU)
-
-[`bench_975.sh`](sglang-omni/bench_975.sh) (1× H100): the PR's base commit vs the PR build on one dependency
-stack, 13 clips × 3 requests. 11 clips byte-identical at the same latency; the two
-where the model loops on repeated `[t][t][S01]` markers are capped at 128 tokens
-(1.8× and 2.6× faster). Table posted on
-[#1840](https://github.com/sgl-project/sglang-omni/pull/1840#issuecomment-5473412278).
-
-[`bench_1814.sh`](sglang-omni/bench_1814.sh) (1× H100): the two `movies800time` validation clips that #1814
-excluded for runaway generation. Both have an empty reference transcription; on
-main they decode to the 5120-token default (~5.7K chars, ~8.1 s each), with the PR
-they stop at 128 tokens in 0.2 s — the 40× case from #975. Posted on
-[#1840](https://github.com/sgl-project/sglang-omni/pull/1840#issuecomment-5473802495)
-and [#1814](https://github.com/sgl-project/sglang-omni/issues/1814#issuecomment-5473802643).
-
-## sglang-omni #1845 — typer floor
-
-`typer_probe.py` is not in this branch; the reproduction was a `Literal` option in a
-one-file typer app against typer 0.9.4 / 0.12.5 / 0.15.4 / 0.16.1 / 0.17.5 / 0.18.0
-(all raise `Type not yet supported: typing.Literal[...]`) and 0.19.0 / 0.19.2 /
-0.27.2 (all parse).

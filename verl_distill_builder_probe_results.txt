@@ -1,0 +1,39 @@
+== Modal, bare venv (transformers 5.16.1 + jinja2), verl main @b356f43 (selection probe) and @9c76436 (render probe), 2026-08-31
+== R1-0528-Qwen3-8B loaded as Qwen2TokenizerFast (transformers 5 picks LlamaTokenizerFast for it and then decodes wrongly)
+
+--- 1. what verl picks and whether it constructs (create_continuous_token_builder(tok, hf_model_type=config.model_type))
+deepseek-ai/DeepSeek-R1-0528-Qwen3-8B    | model_type qwen3 | family qwen3 -> CONSTRUCTION FAILS: ValueError Tokenizer does not define required token '<|im_end|>'
+   <|im_end|> id: None | <｜end▁of▁sentence｜> id: 151645 | eos_token: '<｜end▁of▁sentence｜>'
+deepseek-ai/DeepSeek-R1-Distill-Qwen-7B  | model_type qwen2 | family qwen  -> CONSTRUCTION FAILS: ValueError Tokenizer does not define required token '<|im_end|>'
+   <|im_end|> id: None | <｜end▁of▁sentence｜> id: 151643 | eos_token: '<｜end▁of▁sentence｜>'
+deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B| model_type qwen2 | family qwen  -> CONSTRUCTION FAILS: ValueError Tokenizer does not define required token '<|im_end|>'
+   <|im_end|> id: None | <｜end▁of▁sentence｜> id: 151643 | eos_token: '<｜end▁of▁sentence｜>'
+(traceback: create_continuous_token_builder -> builder_cls(tokenizer, ...) -> QwenContinuousTokenBuilder.__init__ -> require_token_id(tokenizer, "<|im_end|>"))
+
+--- 2. which builder renders their tool appends like the template (first tool turn / third tool turn)
+===== deepseek-ai/DeepSeek-R1-0528-Qwen3-8B
+   turn 1 [default builder, main]: FAILS TypeError: can only concatenate str (not "list") to str
+   turn 1 [default builder + base string args]: '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 0<｜tool▁output▁end｜><｜tool▁outputs▁end｜>' | == template: True
+   turn 1 [deepseek builder, main]: same | == template: True
+   turn 3 [default builder, main]: FAILS TypeError
+   turn 3 [default builder + base string args]: '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 2<｜tool▁output▁end｜><｜tool▁outputs▁end｜>' | == template: True
+   turn 3 [deepseek builder, main]: same | == template: True
+===== deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+   turn 1 [default builder, main]: '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 0<｜tool▁output▁end｜><｜tool▁outputs▁end｜>' | == template: True
+   turn 1 [default builder + base string args]: same | == template: True
+   turn 1 [deepseek builder, main]: same | == template: True
+   turn 3 [default builder, main]: '<｜tool▁outputs▁begin｜><｜tool▁output▁begin｜>answer 2<｜tool▁output▁end｜><｜tool▁outputs▁end｜>' | == template: False
+   turn 3 [default builder + base string args]: same | == template: False
+   turn 3 [deepseek builder, main]: same | == template: False   (conversation-global is_output_first, see #7636)
+===== deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+   (identical pattern to the 7B: turn 1 all three == template; turn 3 all three render the first-turn form)
+===== deepseek-ai/DeepSeek-R1-Distill-Llama-8B
+   (identical pattern: turn 1 all three == template; turn 3 all three render the first-turn form)
+DISTILL_PROBE_DONE
+
+--- timeline (GitHub API)
+#6779 2026-06-22: Continuous Token added, opt-in (data.continuous_token.enable), family inferred from model/tokenizer names;
+                  "DeepSeek-R1-Distill-Qwen" matched no rule -> default builder; "R1-0528-Qwen3-8B" matched "qwen3".
+#6804 2026-08-14: Continuous Token becomes the only agent-loop path, the toggle and data.continuous_token.model_family are removed,
+                  family = exact config.json model_type lookup -> qwen2/qwen3 -> Qwen builder -> require <|im_end|>.
+v0.9.0 2026-08-14: released just before #6804 (compare: df9e224 is not an ancestor of v0.9.0), so pip users are on the opt-in version.

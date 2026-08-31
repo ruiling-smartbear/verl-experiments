@@ -1,7 +1,7 @@
-From 8ced44ffb4b8aea96faa66ccb109d77b221d4c2c Mon Sep 17 00:00:00 2001
+From 1fda54b32a59a1e62dd25b007c1535dfbc7d89f3 Mon Sep 17 00:00:00 2001
 From: Ruilin Gao <ruiling@andrew.cmu.edu>
 Date: Mon, 31 Aug 2026 15:16:42 +0000
-Subject: [PATCH] [rollout] fix: fall back to the default Continuous Token
+Subject: [PATCH] [rollout] fix: fall back to a default Continuous Token
  builder when a required token is missing
 
 DeepSeek-R1 distills keep Qwen model_type values (qwen2/qwen3) but ship
@@ -11,19 +11,21 @@ QwenContinuousTokenBuilder.__init__ raises "Tokenizer does not define
 required token '<|im_end|>'" before any rollout starts (#7637).
 
 With auto inference, treat a builder whose required token is missing like
-an unregistered model_type: fall back to the default builder with a
-warning. Carry the base synthetic tool-call arguments as a JSON string so
-the default builder also renders templates that splice arguments in by
-string concatenation; the DeepSeek subclass override from #7630 moves
-into the base class. An explicitly requested family still raises.
+an unregistered model_type and fall back to the default behavior with a
+warning. The fallback is a dedicated subclass carrying the synthetic
+tool-call arguments as the JSON string form of #7630, because these
+checkpoints' templates splice arguments in by string concatenation; the
+base class keeps the mapping form, which registered templates such as
+Qwen3.5, MiniMax-M2 and GLM-4.7 render with .items(). An explicitly
+requested family still raises.
 ---
- tests/utils/test_continuous_token_on_cpu.py   | 78 +++++++++++++++++--
- verl/utils/tokenizer/continuous_token.py      | 32 ++++----
- .../tokenizer/continuous_token_wiring.py      | 20 ++++-
- 3 files changed, 107 insertions(+), 23 deletions(-)
+ tests/utils/test_continuous_token_on_cpu.py   | 71 +++++++++++++++++++
+ verl/utils/tokenizer/continuous_token.py      | 32 ++++++++-
+ .../tokenizer/continuous_token_wiring.py      | 23 +++++-
+ 3 files changed, 124 insertions(+), 2 deletions(-)
 
 diff --git a/tests/utils/test_continuous_token_on_cpu.py b/tests/utils/test_continuous_token_on_cpu.py
-index 8d2e9c6..fc83ba5 100644
+index 8d2e9c6..9df4581 100644
 --- a/tests/utils/test_continuous_token_on_cpu.py
 +++ b/tests/utils/test_continuous_token_on_cpu.py
 @@ -12,6 +12,7 @@
@@ -34,7 +36,15 @@ index 8d2e9c6..fc83ba5 100644
  import logging
  
  import pytest
-@@ -276,6 +277,26 @@ class _DeepSeekBoundaryTokenizer(_TemplateTokenizer):
+@@ -20,6 +21,7 @@ from verl.utils.tokenizer.continuous_token import (
+     ContinuousTokenBuilder,
+     DeepSeekContinuousTokenBuilder,
+     DeepSeekVL2ContinuousTokenBuilder,
++    FallbackContinuousTokenBuilder,
+     Gemma4ContinuousTokenBuilder,
+     GLM46VContinuousTokenBuilder,
+     GLMContinuousTokenBuilder,
+@@ -276,6 +278,26 @@ class _DeepSeekBoundaryTokenizer(_TemplateTokenizer):
          return rendered
  
  
@@ -61,7 +71,7 @@ index 8d2e9c6..fc83ba5 100644
  class _MissingSpecialTokenTokenizer(_TemplateTokenizer):
      def convert_tokens_to_ids(self, token):
          return None
-@@ -470,6 +491,38 @@ def test_unknown_model_with_non_multimodal_processor_uses_default_text_builder(c
+@@ -470,6 +492,38 @@ def test_unknown_model_with_non_multimodal_processor_uses_default_text_builder(c
      assert "default" in caplog.text
  
  
@@ -70,7 +80,7 @@ index 8d2e9c6..fc83ba5 100644
 +    with caplog.at_level(logging.WARNING, logger="verl.utils.tokenizer.continuous_token_wiring"):
 +        builder = create_continuous_token_builder(tokenizer, hf_model_type="qwen2")
 +
-+    assert type(builder) is ContinuousTokenBuilder
++    assert type(builder) is FallbackContinuousTokenBuilder
 +    assert "QwenContinuousTokenBuilder" in caplog.text
 +    assert "<|im_end|>" in caplog.text
 +    assert "falling back to the default builder" in caplog.text
@@ -100,30 +110,12 @@ index 8d2e9c6..fc83ba5 100644
  def test_default_builder_creation_forwards_kwargs():
      builder = create_continuous_token_builder(
          _TemplateTokenizer(),
-@@ -641,11 +694,12 @@ def test_deepseek_builder_renders_tool_appends_through_string_concatenating_temp
-     ]
-     updated_messages = previous_messages + [{"role": "tool", "content": "answer", "tool_call_id": "call_0"}]
- 
--    # The base synthetic tool call carries a mapping, which this template family cannot splice in.
--    with pytest.raises(TypeError):
--        ContinuousTokenBuilder(tokenizer).tokenize_non_assistant_incremental_messages(
--            previous_messages, updated_messages
--        )
-+    # The synthetic tool call's string arguments splice through this template family
-+    # in the default builder too — the DeepSeek-R1 distills rely on that fallback.
-+    default_incremental = ContinuousTokenBuilder(tokenizer).tokenize_non_assistant_incremental_messages(
-+        previous_messages, updated_messages
-+    )
-+    assert default_incremental == [ord(char) for char in "<tool_output_begin>answer<tool_output_end>"]
- 
-     assert isinstance(builder, DeepSeekContinuousTokenBuilder)
-     incremental = builder.tokenize_non_assistant_incremental_messages(previous_messages, updated_messages)
-@@ -667,6 +721,16 @@ def test_deepseek_builder_synthetic_tool_call_arguments_are_a_json_string():
+@@ -667,6 +721,23 @@ def test_deepseek_builder_synthetic_tool_call_arguments_are_a_json_string():
      assert all(tool_call["function"]["arguments"] == "{}" for tool_call in synthetic_assistant["tool_calls"])
  
  
-+def test_synthetic_tool_call_arguments_are_a_json_string_in_the_base_builder():
-+    synthetic_assistant = ContinuousTokenBuilder(_TemplateTokenizer())._synthetic_assistant_for_tools(
++def test_fallback_builder_synthetic_tool_call_arguments_are_a_json_string():
++    synthetic_assistant = FallbackContinuousTokenBuilder(_TemplateTokenizer())._synthetic_assistant_for_tools(
 +        [{"role": "tool", "content": "out", "tool_call_id": "call_0", "name": "lookup"}]
 +    )
 +
@@ -131,45 +123,22 @@ index 8d2e9c6..fc83ba5 100644
 +    assert arguments == "{}"
 +    assert json.loads(arguments) == {}
 +
++    # The base builder keeps the mapping form: registered templates like Qwen3.5,
++    # MiniMax-M2 and GLM-4.7 render the synthetic arguments with ``.items()``.
++    base_assistant = ContinuousTokenBuilder(_TemplateTokenizer())._synthetic_assistant_for_tools(
++        [{"role": "tool", "content": "out", "tool_call_id": "call_0", "name": "lookup"}]
++    )
++    assert base_assistant["tool_calls"][0]["function"]["arguments"] == {}
++
 +
  def test_gpt_oss_builder_formats_tool_responses_with_resolved_tool_name():
      builder = create_continuous_token_builder(_TemplateTokenizer(), model_family="gptoss")
      previous_messages = [
-@@ -829,12 +893,12 @@ def test_default_builder_builds_dummy_assistant_from_tool_messages_only():
-     assert synthetic_assistant["tool_calls"][0] == {
-         "id": "continuous_token_call_0",
-         "type": "function",
--        "function": {"name": "from_message", "arguments": {}},
-+        "function": {"name": "from_message", "arguments": "{}"},
-     }
-     assert synthetic_assistant["tool_calls"][1] == {
-         "id": "continuous_token_call_1",
-         "type": "function",
--        "function": {"name": "continuous_token_tool", "arguments": {}},
-+        "function": {"name": "continuous_token_tool", "arguments": "{}"},
-     }
- 
- 
 diff --git a/verl/utils/tokenizer/continuous_token.py b/verl/utils/tokenizer/continuous_token.py
-index 6851f27..9c4224e 100644
+index 6851f27..cf77623 100644
 --- a/verl/utils/tokenizer/continuous_token.py
 +++ b/verl/utils/tokenizer/continuous_token.py
-@@ -319,7 +319,13 @@ class ContinuousTokenBuilder:
-                 "type": "function",
-                 "function": {
-                     "name": _tool_message_name_or_dummy(tool_message),
--                    "arguments": {},
-+                    # Templates disagree on the arguments type: DeepSeek-style templates
-+                    # splice ``function['arguments']`` into the prompt by string
-+                    # concatenation (a mapping raises TypeError there), while
-+                    # ``tojson``-style templates render either form. The synthetic call
-+                    # only exists to be diffed away, so carry its arguments as the JSON
-+                    # string both kinds of template render.
-+                    "arguments": "{}",
-                 },
-             }
-             tool_calls.append(tool_call)
-@@ -672,10 +678,19 @@ class Gemma4ContinuousTokenBuilder(ContinuousTokenBuilder):
+@@ -672,10 +672,19 @@ class Gemma4ContinuousTokenBuilder(ContinuousTokenBuilder):
          )
  
  
@@ -190,31 +159,47 @@ index 6851f27..9c4224e 100644
      if isinstance(token_id, list):
          if len(token_id) != 1:
              raise ValueError(f"Tokenizer returned multiple ids for required token {token!r}: {token_id!r}")
-@@ -809,19 +824,6 @@ class DeepSeekContinuousTokenBuilder(ContinuousTokenBuilder):
-             return None
-         return int(token_id)
+@@ -834,6 +843,27 @@ class DeepSeekContinuousTokenBuilder(ContinuousTokenBuilder):
+         )
  
--    def _synthetic_assistant_for_tools(
--        self,
--        tool_messages: list[dict[str, Any]],
--    ) -> dict[str, Any]:
--        # The R1 / V3.1 / V3.2 templates splice ``tool['function']['arguments']`` into
--        # the prompt by string concatenation, so a mapping raises TypeError there. The
--        # synthetic tool call only exists to be diffed away; carry its arguments as the
--        # JSON string those templates expect.
--        synthetic_assistant = super()._synthetic_assistant_for_tools(tool_messages)
--        for tool_call in synthetic_assistant["tool_calls"]:
--            tool_call["function"]["arguments"] = "{}"
--        return synthetic_assistant
--
-     def _merge_non_assistant_token_ids(
-         self, runtime_token_ids: list[int], appended_token_ids: list[int]
-     ) -> MergeResult:
+ 
++class FallbackContinuousTokenBuilder(ContinuousTokenBuilder):
++    """Default-builder fallback for checkpoints whose inferred builder cannot construct.
++
++    The base class carries the synthetic tool-call arguments as a mapping because
++    registered templates like Qwen3.5, MiniMax-M2 and GLM-4.7 render them with
++    ``.items()``. The checkpoints known to need this fallback (the DeepSeek-R1
++    distills of Qwen) instead splice ``function['arguments']`` into the prompt by
++    string concatenation, so this subclass carries the JSON string form, as
++    ``DeepSeekContinuousTokenBuilder`` does (#7630).
++    """
++
++    def _synthetic_assistant_for_tools(
++        self,
++        tool_messages: list[dict[str, Any]],
++    ) -> dict[str, Any]:
++        synthetic_assistant = super()._synthetic_assistant_for_tools(tool_messages)
++        for tool_call in synthetic_assistant["tool_calls"]:
++            tool_call["function"]["arguments"] = "{}"
++        return synthetic_assistant
++
++
+ # =============================================================================
+ # Multimodal (VL) subclasses
+ # =============================================================================
 diff --git a/verl/utils/tokenizer/continuous_token_wiring.py b/verl/utils/tokenizer/continuous_token_wiring.py
-index 446348f..f4ac9ae 100644
+index 446348f..26f29f7 100644
 --- a/verl/utils/tokenizer/continuous_token_wiring.py
 +++ b/verl/utils/tokenizer/continuous_token_wiring.py
-@@ -32,6 +32,7 @@ from .continuous_token import (
+@@ -24,6 +24,7 @@ from .continuous_token import (
+     ContinuousTokenBuilder,
+     DeepSeekContinuousTokenBuilder,
+     DeepSeekVL2ContinuousTokenBuilder,
++    FallbackContinuousTokenBuilder,
+     Gemma4ContinuousTokenBuilder,
+     Gemma4VLContinuousTokenBuilder,
+     GLM46VContinuousTokenBuilder,
+@@ -32,6 +33,7 @@ from .continuous_token import (
      KimiVLContinuousTokenBuilder,
      MiniMaxContinuousTokenBuilder,
      MiniMaxVLContinuousTokenBuilder,
@@ -222,7 +207,7 @@ index 446348f..f4ac9ae 100644
      QwenContinuousTokenBuilder,
      QwenVLContinuousTokenBuilder,
      VLContinuousTokenBuilder,
-@@ -307,7 +308,24 @@ def create_continuous_token_builder(
+@@ -307,7 +309,26 @@ def create_continuous_token_builder(
              f"Ensure the processor is loaded for vision-language models."
          )
      logger.info("Creating Continuous Token builder: family=%s class=%s", resolved_family, builder_cls)
@@ -236,15 +221,17 @@ index 446348f..f4ac9ae 100644
 +        # The inferred builder cannot work with this tokenizer: the checkpoint pairs a
 +        # registered architecture with another vendor's tokenizer (the DeepSeek-R1
 +        # distills keep Qwen model_type values but rename ``<|im_end|>`` away). Give
-+        # such checkpoints the treatment an unregistered model_type already gets.
++        # such checkpoints the treatment an unregistered model_type already gets,
++        # through the fallback subclass whose synthetic tool-call arguments fit
++        # their string-concatenating templates.
 +        logger.warning(
 +            "%s inferred from config.json model_type=%r cannot be constructed (%s); "
-+            "falling back to the default builder (ContinuousTokenBuilder).",
++            "falling back to the default builder (FallbackContinuousTokenBuilder).",
 +            builder_cls.__name__,
 +            _normalize_hf_model_type(hf_model_type),
 +            exc,
 +        )
-+        return ContinuousTokenBuilder(tokenizer, chat_template_kwargs=chat_template_kwargs, **builder_kwargs)
++        return FallbackContinuousTokenBuilder(tokenizer, chat_template_kwargs=chat_template_kwargs, **builder_kwargs)
  
  
  def _is_multimodal_processor(processor: Any | None) -> bool:

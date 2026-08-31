@@ -353,10 +353,10 @@ raw output [`verl_deepseek_fix_check_results.txt`](verl_deepseek_fix_check_resul
 | DeepSeek-V3.2-Exp | dict, json | 0/24 | 24/24 | 24/24 (json) |
 | every other row of the table above | dict | – | 24/24 identical to main | unchanged |
 
-## Follow-ups after #7630 (not yet submitted)
+## Follow-ups after #7630 — #7635 and #7636
 
-Two more DeepSeek changes, kept as patches in
-[`patches/`](patches) until they are opened as PRs:
+Two more DeepSeek changes, opened as [#7635](https://github.com/verl-project/verl/pull/7635) (parser) and
+[#7636](https://github.com/verl-project/verl/pull/7636) (prefix); the commits are also in [`patches/`](patches):
 
 1. **`DeepSeekV3ToolParser`** (`multi_turn.format=deepseek_v3`): verl had no parser for
    the DeepSeek V3-family call markers, so an agent loop with these models never

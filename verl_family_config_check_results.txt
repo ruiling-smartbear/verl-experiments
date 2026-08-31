@@ -1,0 +1,55 @@
+== Modal, bare venv (transformers 5.16.1 + jinja2, no torch), 2026-08-31
+== script: verl_family_config_check.py (this repo), patch: patches/ @2a7716d
+== patch = 0001-rollout-feat-explicit-continuous-token-model-family.patch
+== (data.continuous_token.model_family override + actionable construction error; option 3 of #7637)
+== DeepSeek-R1-0528-Qwen3-8B loaded as Qwen2TokenizerFast for the render checks (ids unaffected);
+== see verl_distill_fix_check_results.txt appendix B for why.
+
+[trees] transformers 5.16.1 | main: 9c76436 | fix3: 9c76436 + patch (9 files changed, 116 insertions(+), 2 deletions(-))
+
+--- [ID] identity on models that work on main (24 tool-append cases per row)
+[ID]  qwen      Qwen/Qwen2-7B-Instruct            fix3==main (24/24)
+[ID]  qwen25    Qwen/Qwen2.5-7B-Instruct          fix3==main (24/24)
+[ID]  qwen3     Qwen/Qwen3-8B                     fix3==main (24/24)
+[ID]  qwen35    Qwen/Qwen3.5-9B                   fix3==main (24/24)
+[ID]  minimaxm2 MiniMaxAI/MiniMax-M2              fix3==main (24/24)
+[ID]  glm47     zai-org/GLM-4.7                   fix3==main (24/24)
+[ID]  gemma4    google/gemma-4-12b-it             fix3==main (24/24)
+[ID]  gptoss    openai/gpt-oss-20b                fix3==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-V3           fix3==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-R1           fix3==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-V3.1         fix3==main (24/24)
+[ID]  deepseek  deepseek-ai/DeepSeek-V3.2-Exp     fix3==main (24/24)
+[ID]  default   Qwen/Qwen3-8B                     fix3==main (24/24)
+
+--- [SEL]/[RND] factory behavior (auto on both trees; model_family="deepseek" on the patched tree;
+--- renders = first / third tool-turn append vs the template's full-conversation delta)
+[SEL] deepseek-ai/DeepSeek-R1-0528-Qwen3-8B      main auto: model_type=qwen3 -> ValueError: Tokenizer does not define required token '<|im_end|>'
+[SEL] deepseek-ai/DeepSeek-R1-0528-Qwen3-8B      fix3 auto: model_type=qwen3 -> MissingRequiredTokenError, full text below
+[SEL] deepseek-ai/DeepSeek-R1-0528-Qwen3-8B      fix3 deepseek: -> DeepSeekContinuousTokenBuilder | turn1==True turn3==True
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-7B    main auto: model_type=qwen2 -> ValueError (same)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-7B    fix3 auto: -> MissingRequiredTokenError, full text below
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-7B    fix3 deepseek: -> DeepSeekContinuousTokenBuilder | turn1==True turn3==False (is_output_first, #7636)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B  main auto: model_type=qwen2 -> ValueError (same)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B  fix3 auto: -> MissingRequiredTokenError, full text below
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B  fix3 deepseek: -> DeepSeekContinuousTokenBuilder | turn1==True turn3==False (is_output_first, #7636)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Llama-8B   main auto: model_type=llama -> ContinuousTokenBuilder | turn1==True turn3==False (present on main too)
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Llama-8B   fix3 auto: -> ContinuousTokenBuilder | same renders as main
+[SEL] deepseek-ai/DeepSeek-R1-Distill-Llama-8B   fix3 deepseek: -> DeepSeekContinuousTokenBuilder | turn1==True turn3==False (override works here too)
+[SEL] Qwen/Qwen3-8B                              main auto and fix3 auto: model_type=qwen3 -> QwenContinuousTokenBuilder | turn1==True turn3==True
+[SEL] deepseek-ai/DeepSeek-V3.1                  main auto and fix3 auto: model_type=deepseek_v3 -> DeepSeekContinuousTokenBuilder | turn1==True turn3==True
+
+--- the full fix3 auto error (real DeepSeek-R1-Distill-Qwen-7B tokenizer, 469 chars; the harness's
+--- per-run 400-char capture cut it short, which is why its guided flag printed False):
+QwenContinuousTokenBuilder, inferred from config.json model_type='qwen2', cannot be constructed:
+Tokenizer does not define required token '<|im_end|>'. The checkpoint pairs this architecture with
+another vendor's tokenizer and chat template (the DeepSeek-R1 distills of Qwen ship DeepSeek's,
+which rename <|im_end|> away). Set data.continuous_token.model_family to the family matching the
+chat template (deepseek for these checkpoints) to select the builder explicitly.
+(mentions override: True | mentions deepseek: True)
+
+--- hydra (local, in the patched tree): ppo_trainer composes; data.continuous_token.model_family
+--- defaults to auto and data.continuous_token.model_family=deepseek overrides to deepseek; the four
+--- _generated_ppo_*.yaml were regenerated with scripts/generate_trainer_config.sh.
+
+FAMILY_CONFIG_CHECK_DONE

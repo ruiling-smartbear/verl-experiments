@@ -102,4 +102,5 @@ is why only this checkpoint is affected. Marker-exact tool parsing (and any prom
 tokenized from text under transformers 5) breaks downstream. None of the checkpoint's
 27 Hub discussions mention it. Outside verl's scope — a checkpoint-side declaration
 that transformers 5 no longer tolerates; fixing the declared class restores both
-directions on 5.x and changes nothing on 4.x.
+directions on 5.x and changes nothing on 4.x. Proposed upstream:
+https://huggingface.co/deepseek-ai/DeepSeek-R1-0528-Qwen3-8B/discussions/28

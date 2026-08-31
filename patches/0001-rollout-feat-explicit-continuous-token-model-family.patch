@@ -1,0 +1,277 @@
+From 1dda0e342994d6eb93da526feeb44d3f2cc9bc4c Mon Sep 17 00:00:00 2001
+From: Ruilin Gao <ruiling@andrew.cmu.edu>
+Date: Mon, 31 Aug 2026 16:35:39 +0000
+Subject: [PATCH] [rollout] feat: explicit Continuous Token model_family
+ override with an actionable construction error
+
+DeepSeek-R1 distills keep Qwen model_type values (qwen2/qwen3) but ship
+DeepSeek's tokenizer and chat template, in which <|im_end|> is renamed
+away. Since #6804 the builder family is an exact model_type lookup, so
+QwenContinuousTokenBuilder.__init__ raises "Tokenizer does not define
+required token '<|im_end|>'" before any rollout starts (#7637), and no
+config can route around it: #6804 removed data.continuous_token.
+
+Restore data.continuous_token.model_family (the override only, not the
+removed enable toggle): auto keeps the exact model_type inference, an
+explicit family selects the builder matching the checkpoint's chat
+template. When the auto-inferred builder cannot be constructed because a
+required token is missing, the error now names the override and the
+family these checkpoints need, instead of only naming the missing token.
+An explicitly requested family that cannot construct still raises the
+original error, and require_token_id raises MissingRequiredTokenError (a
+ValueError subclass) for the token-absent case so the factory rewraps
+exactly that.
+---
+ tests/utils/test_continuous_token_on_cpu.py   | 62 +++++++++++++++++++
+ verl/experimental/agent_loop/agent_loop.py    |  5 ++
+ .../_generated_ppo_megatron_trainer.yaml      |  2 +
+ .../_generated_ppo_torchtitan_trainer.yaml    |  2 +
+ .../config/_generated_ppo_trainer.yaml        |  2 +
+ .../config/_generated_ppo_veomni_trainer.yaml |  2 +
+ verl/trainer/config/data/legacy_data.yaml     | 11 ++++
+ verl/utils/tokenizer/continuous_token.py      | 11 +++-
+ .../tokenizer/continuous_token_wiring.py      | 21 ++++++-
+ 9 files changed, 116 insertions(+), 2 deletions(-)
+
+diff --git a/tests/utils/test_continuous_token_on_cpu.py b/tests/utils/test_continuous_token_on_cpu.py
+index 8d2e9c6..f975f9d 100644
+--- a/tests/utils/test_continuous_token_on_cpu.py
++++ b/tests/utils/test_continuous_token_on_cpu.py
+@@ -276,6 +276,26 @@ class _DeepSeekBoundaryTokenizer(_TemplateTokenizer):
+         return rendered
+ 
+ 
++class _DistillTokenizer(_DeepSeekBoundaryTokenizer):
++    """DeepSeek-R1 distill of Qwen: the root config keeps a Qwen ``model_type`` but the
++    checkpoint ships DeepSeek's tokenizer and chat template, in which ``<|im_end|>``
++    does not exist (renamed to ``<｜end▁of▁sentence｜>``)."""
++
++    name_or_path = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
++    unk_token_id = None
++
++    def __init__(self):
++        super().__init__()
++        self.assistant_id = 2
++
++    def convert_tokens_to_ids(self, token):
++        if token == "<｜end▁of▁sentence｜>":
++            return self.eos_id
++        if token == "<｜Assistant｜>":
++            return self.assistant_id
++        return None
++
++
+ class _MissingSpecialTokenTokenizer(_TemplateTokenizer):
+     def convert_tokens_to_ids(self, token):
+         return None
+@@ -470,6 +490,48 @@ def test_unknown_model_with_non_multimodal_processor_uses_default_text_builder(c
+     assert "default" in caplog.text
+ 
+ 
++def test_auto_family_construction_error_points_at_the_model_family_override():
++    with pytest.raises(ValueError) as excinfo:
++        create_continuous_token_builder(_DistillTokenizer(), hf_model_type="qwen2")
++
++    message = str(excinfo.value)
++    assert "required token '<|im_end|>'" in message
++    assert "data.continuous_token.model_family" in message
++    assert "deepseek" in message
++
++
++def test_explicit_model_family_override_selects_the_matching_builder():
++    tokenizer = _DistillTokenizer()
++    builder = create_continuous_token_builder(tokenizer, model_family="deepseek", hf_model_type="qwen2")
++
++    assert type(builder) is DeepSeekContinuousTokenBuilder
++
++    # The selected builder renders the distill's DeepSeek-style template: tool appends
++    # splice the synthetic call's arguments in by string concatenation.
++    previous_messages = [
++        {"role": "user", "content": "question"},
++        {
++            "role": "assistant",
++            "content": "",
++            "tool_calls": [
++                {"id": "call_0", "type": "function", "function": {"name": "lookup", "arguments": {"q": "x"}}}
++            ],
++        },
++    ]
++    updated_messages = previous_messages + [{"role": "tool", "content": "answer", "tool_call_id": "call_0"}]
++    incremental = builder.tokenize_non_assistant_incremental_messages(previous_messages, updated_messages)
++    assert incremental == [ord(char) for char in "<tool_output_begin>answer<tool_output_end>"]
++
++
++def test_explicit_family_that_cannot_construct_raises_the_original_error():
++    with pytest.raises(ValueError) as excinfo:
++        create_continuous_token_builder(_DistillTokenizer(), model_family="qwen")
++
++    message = str(excinfo.value)
++    assert "required token '<|im_end|>'" in message
++    assert "model_family" not in message
++
++
+ def test_default_builder_creation_forwards_kwargs():
+     builder = create_continuous_token_builder(
+         _TemplateTokenizer(),
+diff --git a/verl/experimental/agent_loop/agent_loop.py b/verl/experimental/agent_loop/agent_loop.py
+index 1240a89..9b97dda 100644
+--- a/verl/experimental/agent_loop/agent_loop.py
++++ b/verl/experimental/agent_loop/agent_loop.py
+@@ -238,12 +238,17 @@ class AgentLoopBase(ABC):
+         self.data_config = data_config.config
+         self.apply_chat_template_kwargs = self.data_config.get("apply_chat_template_kwargs", {})
+         self.mm_processor_kwargs = self.data_config.get("mm_processor_kwargs", {})
++        continuous_token_config = self.data_config.get("continuous_token", None) or {}
+         # Continuous Token is the only rollout tokenization path for agent loops.
+         # The model family (boundary handling) is inferred by exact lookup of the
+         # root Hugging Face config's model_type. Unrecognized models use the
+         # default builder (or default VL builder with a multimodal processor).
++        # ``data.continuous_token.model_family`` overrides the inference for
++        # checkpoints whose chat template does not match their architecture
++        # (the DeepSeek-R1 distills of Qwen need ``deepseek``).
+         self.continuous_token_builder = create_continuous_token_builder(
+             self.tokenizer,
++            model_family=continuous_token_config.get("model_family", "auto") or "auto",
+             hf_model_type=hf_model_type,
+             chat_template_kwargs=self.apply_chat_template_kwargs,
+             mm_processor_kwargs=self.mm_processor_kwargs,
+diff --git a/verl/trainer/config/_generated_ppo_megatron_trainer.yaml b/verl/trainer/config/_generated_ppo_megatron_trainer.yaml
+index dcdda71..11fad7c 100644
+--- a/verl/trainer/config/_generated_ppo_megatron_trainer.yaml
++++ b/verl/trainer/config/_generated_ppo_megatron_trainer.yaml
+@@ -542,6 +542,8 @@ data:
+     name: null
+   return_multi_modal_inputs: true
+   apply_chat_template_kwargs: {}
++  continuous_token:
++    model_family: auto
+   mm_processor_kwargs: {}
+ critic:
+   optim:
+diff --git a/verl/trainer/config/_generated_ppo_torchtitan_trainer.yaml b/verl/trainer/config/_generated_ppo_torchtitan_trainer.yaml
+index e27dc98..1dfcf82 100644
+--- a/verl/trainer/config/_generated_ppo_torchtitan_trainer.yaml
++++ b/verl/trainer/config/_generated_ppo_torchtitan_trainer.yaml
+@@ -486,6 +486,8 @@ data:
+     name: null
+   return_multi_modal_inputs: true
+   apply_chat_template_kwargs: {}
++  continuous_token:
++    model_family: auto
+   mm_processor_kwargs: {}
+ critic:
+   optim:
+diff --git a/verl/trainer/config/_generated_ppo_trainer.yaml b/verl/trainer/config/_generated_ppo_trainer.yaml
+index 50e8260..dcc5d6b 100644
+--- a/verl/trainer/config/_generated_ppo_trainer.yaml
++++ b/verl/trainer/config/_generated_ppo_trainer.yaml
+@@ -527,6 +527,8 @@ data:
+     name: null
+   return_multi_modal_inputs: true
+   apply_chat_template_kwargs: {}
++  continuous_token:
++    model_family: auto
+   mm_processor_kwargs: {}
+ critic:
+   optim:
+diff --git a/verl/trainer/config/_generated_ppo_veomni_trainer.yaml b/verl/trainer/config/_generated_ppo_veomni_trainer.yaml
+index 0260192..f9a02f3 100644
+--- a/verl/trainer/config/_generated_ppo_veomni_trainer.yaml
++++ b/verl/trainer/config/_generated_ppo_veomni_trainer.yaml
+@@ -504,6 +504,8 @@ data:
+     name: null
+   return_multi_modal_inputs: true
+   apply_chat_template_kwargs: {}
++  continuous_token:
++    model_family: auto
+   mm_processor_kwargs: {}
+ critic:
+   optim:
+diff --git a/verl/trainer/config/data/legacy_data.yaml b/verl/trainer/config/data/legacy_data.yaml
+index 2971c6b..e35549c 100644
+--- a/verl/trainer/config/data/legacy_data.yaml
++++ b/verl/trainer/config/data/legacy_data.yaml
+@@ -118,5 +118,16 @@ return_multi_modal_inputs: True
+ # Additional kwargs when calling tokenizer.apply_chat_template
+ apply_chat_template_kwargs: {}
+ 
++# Continuous Token boundary handling.
++continuous_token:
++
++  # Builder family override. auto (the default) infers the family by exact lookup of the root
++  # Hugging Face config's model_type. Set a family explicitly when the checkpoint pairs an
++  # architecture with another vendor's tokenizer and chat template, and therefore fails to
++  # construct the inferred builder (the DeepSeek-R1 distills of Qwen need `deepseek`).
++  # Options: the families listed in CONTINUOUS_TOKEN_BUILDER_FAMILIES
++  # (verl/utils/tokenizer/continuous_token_wiring.py), plus auto.
++  model_family: auto
++
+ # Additional kwargs passed to multimodal processors/backends.
+ mm_processor_kwargs: {}
+diff --git a/verl/utils/tokenizer/continuous_token.py b/verl/utils/tokenizer/continuous_token.py
+index 6851f27..bcc95bf 100644
+--- a/verl/utils/tokenizer/continuous_token.py
++++ b/verl/utils/tokenizer/continuous_token.py
+@@ -672,10 +672,19 @@ class Gemma4ContinuousTokenBuilder(ContinuousTokenBuilder):
+         )
+ 
+ 
++class MissingRequiredTokenError(ValueError):
++    """A special token a model-specific builder depends on is absent from the tokenizer.
++
++    Raised at builder construction. Checkpoints that pair a registered architecture
++    with another vendor's tokenizer hit this — the DeepSeek-R1 distills keep Qwen
++    ``model_type`` values but rename ``<|im_end|>`` away.
++    """
++
++
+ def require_token_id(tokenizer: Any, token: str) -> int:
+     token_id = tokenizer.convert_tokens_to_ids(token)
+     if token_id is None:
+-        raise ValueError(f"Tokenizer does not define required token {token!r}")
++        raise MissingRequiredTokenError(f"Tokenizer does not define required token {token!r}")
+     if isinstance(token_id, list):
+         if len(token_id) != 1:
+             raise ValueError(f"Tokenizer returned multiple ids for required token {token!r}: {token_id!r}")
+diff --git a/verl/utils/tokenizer/continuous_token_wiring.py b/verl/utils/tokenizer/continuous_token_wiring.py
+index 446348f..d6b1cbd 100644
+--- a/verl/utils/tokenizer/continuous_token_wiring.py
++++ b/verl/utils/tokenizer/continuous_token_wiring.py
+@@ -32,6 +32,7 @@ from .continuous_token import (
+     KimiVLContinuousTokenBuilder,
+     MiniMaxContinuousTokenBuilder,
+     MiniMaxVLContinuousTokenBuilder,
++    MissingRequiredTokenError,
+     QwenContinuousTokenBuilder,
+     QwenVLContinuousTokenBuilder,
+     VLContinuousTokenBuilder,
+@@ -307,7 +308,25 @@ def create_continuous_token_builder(
+             f"Ensure the processor is loaded for vision-language models."
+         )
+     logger.info("Creating Continuous Token builder: family=%s class=%s", resolved_family, builder_cls)
+-    return builder_cls(tokenizer, chat_template_kwargs=chat_template_kwargs, **builder_kwargs)
++    try:
++        return builder_cls(tokenizer, chat_template_kwargs=chat_template_kwargs, **builder_kwargs)
++    except MissingRequiredTokenError as exc:
++        if _normalize_model_family(model_family) != ContinuousTokenModelFamily.AUTO:
++            raise
++        # The builder inferred from the architecture cannot work with this tokenizer: the
++        # checkpoint pairs a registered model_type with another vendor's tokenizer and chat
++        # template (the DeepSeek-R1 distills keep Qwen model_type values but rename
++        # ``<|im_end|>`` away). Point the user at the explicit override, since the builder
++        # has to follow the chat template's conversation protocol, not the architecture.
++        raise MissingRequiredTokenError(
++            f"{builder_cls.__name__}, inferred from config.json model_type="
++            f"{_normalize_hf_model_type(hf_model_type)!r}, cannot be constructed: {exc}. The "
++            f"checkpoint pairs this architecture with another vendor's tokenizer and chat "
++            f"template (the DeepSeek-R1 distills of Qwen ship DeepSeek's, which rename "
++            f"<|im_end|> away). Set data.continuous_token.model_family to the family matching "
++            f"the chat template (deepseek for these checkpoints) to select the builder "
++            f"explicitly."
++        ) from exc
+ 
+ 
+ def _is_multimodal_processor(processor: Any | None) -> bool:
+-- 
+2.43.0
+
